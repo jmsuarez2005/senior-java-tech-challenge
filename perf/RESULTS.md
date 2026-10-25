@@ -27,6 +27,10 @@ Container limits are the ones in the statement: app and k6 at 1 CPU / 1 GB, Mong
 | 9c | Run 8 + review fixes (value size check, delete on failed write, Mongo timeouts, circuit breaker) | Redis, on by default | 1,789 | 71 ms | 158 ms | 212 ms | 0% | 2.7 s |
 | 9d | Same as 9c (repeat) | Redis, on by default | 1,740 | 72 ms | 168 ms | 222 ms | 0% | |
 | 10 | Same as 9c without the circuit breaker | Redis, on by default | 1,825 | 71 ms | 157 ms | 203 ms | 0% | |
+| A1 | Control: `main` at that point (run 9c code) | Redis | 1,963 | 67 ms | 150 ms | 194 ms | 0% | 2.3 s |
+| B1 | Caffeine near cache in front of Redis | Redis + in-process | 3,342 | 31 ms | 128 ms | 205 ms | 0% | 2.7 s |
+| A2 | Control (repeat) | Redis | 1,927 | 68 ms | 154 ms | 208 ms | 0% | |
+| B2 | Near cache (repeat) | Redis + in-process | 3,237 | 32 ms | 131 ms | 211 ms | 0% | |
 
 App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarkus (both models).
 
@@ -54,6 +58,12 @@ App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarku
   price of bounded behaviour when Redis degrades. A first version with a 250 ms deadline inside the breaker
   tripped on queueing, opened the circuit with Redis healthy and dropped throughput to about 1,600 req/s; the
   deadline was removed.
+- **Near cache, A/B against a control run alternately (branch `experiment/near-cache`):** a Caffeine map in the app
+  holds the built `Product` for 5 s in front of Redis; local writes refresh it at once. Throughput +69%
+  (about 3,290 against 1,945 req/s), median -53%, p95 -15%. p99 did not move (about 208 against 201 ms): the slowest
+  requests are most likely the writes, which still go to MongoDB, and k6 itself climbed to 88% of its CPU, so the
+  load generator is now close to being the limit. The app container dropped from 89% to 60% CPU while serving
+  70% more requests.
 - **Run 6, a pool that was too small:** the Quarkus Redis client defaults to 6 connections and 24 waiters. Under 200
   concurrent requests the queue overflowed, the cache failed open on most reads and every request paid for Redis and
   MongoDB. Sizing the pool to 32 connections (run 6b) removed every cache failure.
