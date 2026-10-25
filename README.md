@@ -2,7 +2,7 @@
 
 Products with historical prices. A product can have many prices over time, but only one price in force per day
 and currency. Built with Java 21 on the Quarkus reactive stack (Mutiny on the Vert.x event loop) and MongoDB, with
-an optional Redis cache.
+a Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md). Why this stack was chosen is explained at the end, in
@@ -10,19 +10,19 @@ The original statement is in [SPEC.md](SPEC.md). Every design decision, one line
 
 ## Running it
 
-Everything (API, MongoDB and the k6 load test) with one command:
+Everything (API, MongoDB, Redis and the k6 load test) with one command:
 
 ```bash
 docker compose up --build
 ```
 
-Only the API and MongoDB:
+Only the API with MongoDB and Redis:
 
 ```bash
 docker compose up --build app
 ```
 
-Redis is optional and off by default; see [Load test](#load-test) to switch it on.
+Redis is on by default. `PRODUCTS_CACHE_ENABLED=false` runs without the cache (see [Load test](#load-test)).
 
 The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui`, the OpenAPI document at
 `/q/openapi` and health at `/actuator/health`.
@@ -70,7 +70,8 @@ curl -s 'localhost:8080/products/{id}/prices?date=2024-06-30'   # {"value":99.99
   day another one ends overlaps it.
 - `endDate` may be `null`, meaning "until further notice". `initDate` must be strictly before `endDate`.
 - `value` must be positive and cannot have more decimals than its currency allows (`9.999` EUR or `100.5` JPY are
-  rejected, never rounded).
+  rejected, never rounded). Amounts are limited to 18 digits in minor units, which also stops crafted values like
+  `1e10000000` from costing CPU.
 - Two prices of the same product and currency cannot overlap. Different currencies have independent timelines.
 
 ### Changes and additions to the endpoints
@@ -177,9 +178,14 @@ traffic being reads. Products are now cached in Redis, cache-aside, behind the `
 - Adding a price stores the product returned by the atomic write, so the next read already sees the new price.
 - Every write to the cache is a compare-and-set on `version` (a small Lua script). A slow reader that loaded the
   product before a price was added can never put that older copy back over the newer one.
-- The cache fails open: if Redis is down or slow (500 ms timeout), the request is served from MongoDB and the
-  error is logged. Redis is not part of the health check for the same reason.
-- Redis runs without persistence, with `maxmemory 256mb`, LRU eviction and a 10-minute TTL as a safety net.
+- If storing the new version after a write fails, the entry is deleted, so a stale price is never served for the
+  TTL.
+- The cache fails open: if Redis is down or slow (500 ms timeout), the request is served from MongoDB. A circuit
+  breaker opens after half of 20 calls fail, so only the first few requests pay the timeout, and a connection to an
+  unreachable Redis gives up after 1 s. Stopping Redis under traffic was tested: no request failed, and the worst
+  one took 3 s while the circuit was opening. Redis is not part of the health check.
+- Redis runs without persistence, with `maxmemory 256mb`, LRU eviction and a 1-minute TTL that bounds staleness
+  in the worst case.
 - The client pool is sized for the load: 32 connections and 512 waiters. With the defaults (6 and 24) the queue
   overflowed under 200 concurrent requests, the cache failed open on most reads and tail latency tripled.
 
@@ -240,10 +246,10 @@ The script is [perf/load-test.js](perf/load-test.js). Load parameters can be ove
 docker compose run --rm -e VUS=50 -e STEADY=30s benchmark
 ```
 
-The base infrastructure is the minimum: app, MongoDB and k6. Redis is an improvement you switch on per run:
+Every run gets a name for its report. To compare against the minimal setup, switch the cache off:
 
 ```bash
-RUN=with-redis PRODUCTS_CACHE_ENABLED=true docker compose --profile cache up --build
+RUN=no-cache PRODUCTS_CACHE_ENABLED=false docker compose up --build
 ```
 
 [scripts/seed.sh](scripts/seed.sh) seeds any running instance without k6:
@@ -285,7 +291,7 @@ usage, with the app limited to 1 CPU and 1 GB. The stack was therefore settled b
 | Framework | Quarkus 3 | Build-time dependency injection: fastest startup and lowest memory of the options measured. |
 | Concurrency | Reactive, Mutiny on the Vert.x event loop | Non-blocking end to end; with Redis it beat virtual threads on throughput and tail latency. |
 | Database | MongoDB | A product and all its prices are one document: every read is one lookup by `_id`, and the no-overlap rule is one atomic update. |
-| Cache | Redis, optional | Takes reads off MongoDB, which only gets half a CPU; shared, so it stays correct with several app instances. |
+| Cache | Redis | Takes reads off MongoDB, which only gets half a CPU; shared, so it stays correct with several app instances. |
 | Load test | k6 | Scripted scenarios, thresholds and a JSON report, in a small container. |
 
 ### How it was decided
@@ -326,7 +332,7 @@ thinner than Reactor on WebFlux. That is why the model was measured again instea
   for those warnings and showed none. Any new library must have a non-blocking client.
 - **MongoDB instead of PostgreSQL.** An exclusion constraint would express the no-overlap rule just as well and
   more declaratively; MongoDB was preferred for the read path, where a product and its whole history are one lookup.
-- **Redis adds a container and a network hop.** It is optional, off by default and fails open, so the API works
+- **Redis adds a container and a network hop.** It fails open behind a circuit breaker, so the API works
   the same without it.
 
 The stack can still change cheaply: as described in [Architecture](#architecture), the move to Quarkus only

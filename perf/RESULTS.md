@@ -23,6 +23,10 @@ Container limits are the ones in the statement: app and k6 at 1 CPU / 1 GB, Mong
 | 7b | Quarkus reactive (repeat) | none | 1,532 | 90 ms | 192 ms | 240 ms | 0% | |
 | 8 | Quarkus reactive | Redis, pool of 32 | 1,939 | 67 ms | 150 ms | 195 ms | 0% | 2.3 s |
 | 8b | Quarkus reactive (repeat) | Redis, pool of 32 | 2,029 | 65 ms | 146 ms | 201 ms | 0% | |
+| 8c | Run 8 code again, measured hours later as a control | Redis, pool of 32 | 1,834 | 71 ms | 155 ms | 199 ms | 0% | 2.6 s |
+| 9c | Run 8 + review fixes (value size check, delete on failed write, Mongo timeouts, circuit breaker) | Redis, on by default | 1,789 | 71 ms | 158 ms | 212 ms | 0% | 2.7 s |
+| 9d | Same as 9c (repeat) | Redis, on by default | 1,740 | 72 ms | 168 ms | 222 ms | 0% | |
+| 10 | Same as 9c without the circuit breaker | Redis, on by default | 1,825 | 71 ms | 157 ms | 203 ms | 0% | |
 
 App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarkus (both models).
 
@@ -43,6 +47,13 @@ App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarku
   untouched. Without cache the difference is within noise (throughput +6%, p95 -3%, p99 -6%). With Redis it is
   consistent across repeats: throughput +11%, p95 -8%, p99 -10%, and the app container had more CPU left
   (about 67% against 80%). No event-loop blocking warnings in any run.
+- **Fixes from the technical review (runs 9c, 9d, 10, against control 8c):** the same run-8 code measured again
+  hours later gave 1,834 req/s instead of about 1,980, so part of any later difference is the machine drifting, not
+  the code. Against that control, the value size check, the delete on a failed write and the Mongo timeouts cost
+  nothing measurable (run 10). The circuit breaker costs about 4% of throughput and some p99 (runs 9c and 9d), the
+  price of bounded behaviour when Redis degrades. A first version with a 250 ms deadline inside the breaker
+  tripped on queueing, opened the circuit with Redis healthy and dropped throughput to about 1,600 req/s; the
+  deadline was removed.
 - **Run 6, a pool that was too small:** the Quarkus Redis client defaults to 6 connections and 24 waiters. Under 200
   concurrent requests the queue overflowed, the cache failed open on most reads and every request paid for Redis and
   MongoDB. Sizing the pool to 32 connections (run 6b) removed every cache failure.
@@ -61,6 +72,8 @@ busiest container again. That makes MongoDB the next thing to look at.
 - Measured on a 2 CPU / 2 GB Colima VM. The containers' limits add up to 3 CPU, so they compete for the host
   and absolute numbers are pessimistic. All runs share the same conditions, so the comparison holds.
 - The k6 thresholds (`p95 < 50 ms`) are not met on this machine in any run.
+- k6 reported negative minimum latencies (down to -68 ms) in most Quarkus runs, a sign that the load generator
+  itself was short of CPU. Treat absolute latencies from those runs with care; the comparisons share the problem.
 - Each configuration was run once or twice; repeats landed within 3% for virtual threads and Quarkus, within 15% for WebFlux. Differences under about 10% should be read as noise.
 
 Raw k6 reports are written to `perf/results/summary-<run>.json` (ignored by git).
