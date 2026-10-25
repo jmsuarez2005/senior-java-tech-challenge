@@ -2,8 +2,9 @@
 
 ## Stack
 
-- Quarkus 3.40 (latest stable; 4.0 is still a beta) with virtual threads: chosen by measurement after trying Spring Boot 4 on WebFlux and Spring Boot 4 on MVC with virtual threads. Under the same limits it served about 35% more requests with a 27 to 42% lower p99, started in 2.5 s instead of 7 to 12 s and used half the memory. The runs are in `perf/RESULTS.md`.
-- Virtual threads instead of a reactive pipeline: the request path is plain imperative code on blocking drivers, and with one CPU for the app the reactive version spent more CPU per request than the blocking one.
+- Quarkus 3.40 (latest stable; 4.0 is still a beta) on its reactive stack: chosen by measurement after Spring Boot 4 on WebFlux, Spring Boot 4 on MVC with virtual threads and Quarkus with virtual threads. Quarkus beat both Spring variants by about a third in throughput, started in 2.5 s instead of 7 to 12 s and used half the memory. The runs are in `perf/RESULTS.md`.
+- Reactive (Mutiny on the Vert.x event loop, reactive MongoDB and Redis clients) over virtual threads, both on Quarkus: with Redis it was consistently better across repeats (throughput +11%, p95 -8%, p99 -10%) and left the app more CPU headroom; without cache the two were within noise.
+- Reactive WebFlux lost to virtual threads on Spring, yet reactive won on Quarkus, most likely because Mutiny on Vert.x is a thinner layer than Reactor on WebFlux; that is why the model was measured again on the new framework instead of carried over.
 - Build stays on the provided Gradle 8.14.3 wrapper (not Maven): keep the scaffold the challenge ships with; `sh gradlew build` is the verify step. Quarkus 4 will need Gradle 9.6, which is a wrapper bump when that upgrade happens.
 - `./gradlew` is invoked as `sh gradlew`: the provided wrapper is committed without the executable bit.
 - Package root `com.mango.products`: kept from the provided scaffold.
@@ -12,8 +13,10 @@
 
 - Hexagonal layout `domain` / `application` / `adapters.in.web` / `adapters.out.mongo` / `adapters.out.redis`, enforced by ArchUnit: the domain may only depend on `java.*`, adapters never depend on each other.
 - `config` is the composition root and the only package allowed to pick adapters; ArchUnit ignores its dependencies on purpose.
-- Moving from Spring to Quarkus only rewrote adapters and wiring: the domain did not change, and the use cases only swapped `@Service` for `@ApplicationScoped`.
+- Moving from Spring to Quarkus only rewrote adapters and wiring: the domain did not change, and the use cases only swapped `@Service` for `@ApplicationScoped`. Moving to the reactive model also changed the ports and use cases to return `Uni`; the domain still did not change.
 - The outbound ports (`ProductRepository`, `ProductCache`) live in `application.port.out`, next to the use cases that need them, and keep the domain free of persistence concerns.
+- Ports and use cases return Mutiny `Uni`, so the application layer depends on Mutiny; the domain stays plain Java. An absent value is a `null` item, Mutiny's idiom, instead of an `Optional` inside a `Uni`.
+- Anything that can fail synchronously (building a `Price`, parsing a query parameter) runs inside `Uni.createFrom().item(...)`, so every failure travels down the pipeline and reaches the same exception mappers.
 - Use cases are concrete application services, one per use case, with no inbound port interfaces: a single implementation behind an interface adds indirection without a second adapter to justify it.
 - `ProductId` is a value object: ids cannot be mixed up with other strings in signatures, and blank ids fail in the domain.
 
@@ -68,11 +71,12 @@
 - Serial GC in the container: the app gets 1 CPU, where G1's concurrent threads only add overhead.
 - CDS archive created by a training run at image build (start, then a graceful stop that writes the archive): `AutoCreateSharedArchive` alone would only help from the second start of the same container.
 - Native image is not built: it would cut startup further but needs GraalVM in the build and a longer image build; the JVM image already starts in about 2.5 s.
+- Quarkus sizes the event loops from the CPUs it sees (two for the 1 CPU container); no thread pool tuning is needed for request handling.
 
 ## Tests and load test
 
 - Integration tests use Quarkus Dev Services, which start MongoDB and Redis in containers; they need a Docker daemon and no test-specific container code.
-- Virtual threads are checked under load, not assumed: a thread dump shows the virtual-thread carriers, and `-Djdk.tracePinnedThreads` reported no pinning with the Mongo and Redis clients.
+- The event loop must never block: Vert.x logs a warning when it does, and the test suite and every load-test run were checked for those warnings (none). All I/O goes through the reactive MongoDB and Redis clients.
 - JUnit default timeout of 60 s: a call that never returns fails the test instead of hanging the build.
 - k6 replaces the provided curl benchmark and keeps its service name and resource limits; it seeds through the API in `setup()` with batched requests, so the data goes through the same validation as real traffic.
 - Thresholds are scoped to the `mixed` scenario: seeding requests are not part of the measured load.

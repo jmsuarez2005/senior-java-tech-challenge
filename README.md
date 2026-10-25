@@ -1,7 +1,8 @@
 # Products API
 
 Products with historical prices. A product can have many prices over time, but only one price in force per day
-and currency. Built with Quarkus on Java 21 virtual threads and MongoDB, with an optional Redis cache.
+and currency. Built with Java 21 on the Quarkus reactive stack (Mutiny on the Vert.x event loop) and MongoDB, with
+an optional Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md). Why this stack was chosen is explained at the end, in
@@ -114,16 +115,21 @@ Hexagonal, with the dependency rule checked by ArchUnit on every build:
 
 ```
 adapters/in/web      JAX-RS resource, request/response records, input validation, problem details
-application          one class per use case, plus the outbound ports ProductRepository and ProductCache
+application          one class per use case returning Mutiny Uni, plus the outbound ports ProductRepository and ProductCache
 domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
 adapters/out/mongo   MongoDB document mapping and the ProductRepository implementation
 adapters/out/redis   the ProductCache implementation (adapters/out/nocache when the cache is off)
 config               composition root: picks the cache implementation at startup
 ```
 
-The architecture paid off when the framework changed. The project started on Spring Boot; moving to Quarkus meant
+The architecture paid off when the stack changed. The project started on Spring Boot; moving to Quarkus meant
 rewriting the adapters and the wiring, while the domain did not change and the use cases only swapped
-`@Service` for `@ApplicationScoped`.
+`@Service` for `@ApplicationScoped`. Moving from virtual threads to the reactive model changed the ports and use
+cases to return `Uni`; the domain still did not change.
+
+Every endpoint returns a `Uni` and runs on the Vert.x event loop, and all I/O goes through the reactive MongoDB and
+Redis clients. Anything that can fail synchronously, such as building a `Price` from the request, runs inside the
+pipeline, so every failure reaches the same exception mappers.
 
 A request is validated twice, on purpose. The web adapter checks it first (field constraints plus a cross-field
 `@ValidPrice`) and answers with all the violations at once, before any use case runs. The domain then enforces the
@@ -275,9 +281,9 @@ usage, with the app limited to 1 CPU and 1 GB. The stack was therefore settled b
 
 | Piece | Choice | Why |
 |---|---|---|
-| Language | Java 21 | Current LTS; virtual threads, records, sealed types and pattern matching keep the code short. |
+| Language | Java 21 | Current LTS; records, sealed types and pattern matching keep the code short. |
 | Framework | Quarkus 3 | Build-time dependency injection: fastest startup and lowest memory of the options measured. |
-| Concurrency | Virtual threads | Plain imperative code on blocking drivers, with less CPU per request than a reactive pipeline here. |
+| Concurrency | Reactive, Mutiny on the Vert.x event loop | Non-blocking end to end; with Redis it beat virtual threads on throughput and tail latency. |
 | Database | MongoDB | A product and all its prices are one document: every read is one lookup by `_id`, and the no-overlap rule is one atomic update. |
 | Cache | Redis, optional | Takes reads off MongoDB, which only gets half a CPU; shared, so it stays correct with several app instances. |
 | Load test | k6 | Scripted scenarios, thresholds and a JSON report, in a small container. |
@@ -293,25 +299,36 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
    became the limit.
 3. **Spring MVC with virtual threads** replaced WebFlux to test whether the reactive machinery paid off. It did
    not: with the app at its CPU limit, the blocking version served more requests with a lower tail latency.
-4. **Quarkus with virtual threads** kept the same design and only replaced the adapters. It was the best result
-   in every metric:
+4. **Quarkus with virtual threads** kept the same design and only replaced the adapters. It beat both Spring
+   variants in every metric.
+5. **Quarkus reactive** (Mutiny, reactive drivers) was measured last, because the reactive model deserved a
+   second chance on a different framework. Without cache it tied with virtual threads; with Redis it was
+   consistently better, so it is the final choice:
 
 | Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
 |---|---|---|---|---|---|
 | Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
 | Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
-| **Quarkus 3, virtual threads** | **~1,790** | **~161 ms** | **~221 ms** | **2.5 s** | **~150 MB** |
+| Quarkus 3, virtual threads | ~1,790 | ~161 ms | ~221 ms | 2.5 s | ~150 MB |
+| **Quarkus 3, reactive (Mutiny)** | **~1,980** | **~148 ms** | **~198 ms** | **2.5 s** | **~150 MB** |
+
+Reactive lost on Spring and won on Quarkus. The most likely reason is the layer underneath: Mutiny on Vert.x is
+thinner than Reactor on WebFlux. That is why the model was measured again instead of being ruled out.
 
 ### Trade-offs accepted
 
 - **Quarkus has a smaller ecosystem than Spring Boot.** Everything this service needs (REST, validation, OpenAPI,
   health, MongoDB, Redis) is covered by official extensions; the gap would matter for a larger system.
-- **Virtual threads rely on drivers that do not pin.** The Mongo and Redis clients were checked under load with
-  `-Djdk.tracePinnedThreads` and showed no pinning. A new blocking library would need the same check.
+- **Reactive code is harder to read than imperative code**, and the application layer now depends on Mutiny
+  through the `Uni` in its ports. The gain (about 10% in throughput and p99 with Redis) was judged worth it for a
+  challenge that puts performance first; the virtual-thread version stays on the branch `experiment/quarkus`.
+- **The event loop must never block.** Vert.x warns when it does; the tests and every load-test run were checked
+  for those warnings and showed none. Any new library must have a non-blocking client.
 - **MongoDB instead of PostgreSQL.** An exclusion constraint would express the no-overlap rule just as well and
   more declaratively; MongoDB was preferred for the read path, where a product and its whole history are one lookup.
 - **Redis adds a container and a network hop.** It is optional, off by default and fails open, so the API works
   the same without it.
 
 The stack can still change cheaply: as described in [Architecture](#architecture), the move to Quarkus only
-touched the adapters and the wiring.
+touched the adapters and the wiring, and the move to reactive added the ports and use cases; the domain never
+changed.
