@@ -14,3 +14,8 @@ One line per decision. Format: decision — reason.
 - Actuator exposes only `health`, which includes the Mongo indicator — the compose healthcheck then means "app and database ready".
 - Native image is opt-in via `./gradlew bootBuildImage -Pnative` — Gradle equivalent of a Maven `native` profile; not required to build locally.
 - `./gradlew` is invoked as `sh gradlew` in the Dockerfile — the provided wrapper is committed without the executable bit.
+- `initDate < endDate` strictly (as the statement says) — a single-day price is rejected; with closed intervals `[d, d]` would otherwise be valid.
+- The open-end sentinel `9999-12-31` lives in `DateRange` — one place maps `null` to the sentinel, so the domain, Mongo filters and the web mapping never special-case open ranges; dates after it are rejected.
+- Domain exceptions are a sealed hierarchy without stack traces — expected outcomes (404/409 under load) should not pay for `fillInStackTrace`, and the web advice can switch over them exhaustively.
+- Positivity (`value > 0`) is a `Price` rule, not a `Money` rule — money can be zero or negative in general; a price cannot.
+- Currencies without a minor unit (`getDefaultFractionDigits() == -1`, e.g. XAU) are rejected — they have no defined scale for `amountMinor`.
