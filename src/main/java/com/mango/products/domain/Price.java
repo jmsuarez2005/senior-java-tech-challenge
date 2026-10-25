@@ -2,7 +2,6 @@ package com.mango.products.domain;
 
 import java.util.Objects;
 
-/** Immutable: a price is never edited, only added (or, at most, removed). */
 public record Price(Money money, DateRange period) {
 
 	public Price {
@@ -13,7 +12,6 @@ public record Price(Money money, DateRange period) {
 		}
 	}
 
-	/** Prices only conflict within the same currency: each currency has its own timeline. */
 	public boolean overlaps(Price other) {
 		return money.currency().equals(other.money.currency()) && period.overlaps(other.period);
 	}

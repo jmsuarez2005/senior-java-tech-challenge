@@ -5,10 +5,6 @@ import java.math.RoundingMode;
 import java.util.Currency;
 import java.util.Objects;
 
-/**
- * Amount in the currency's minor unit (cents for EUR, yen for JPY, fils for KWD).
- * The scale always comes from the currency, never from a fixed factor of 100.
- */
 public record Money(long amountMinor, Currency currency) {
 
 	public Money {
@@ -16,7 +12,6 @@ public record Money(long amountMinor, Currency currency) {
 		fractionDigits(currency);
 	}
 
-	/** Rejects, never rounds, a value with more decimals than the currency allows. */
 	public static Money of(BigDecimal value, Currency currency) {
 		Objects.requireNonNull(value, "value");
 		try {

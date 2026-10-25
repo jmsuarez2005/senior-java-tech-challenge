@@ -1,21 +1,24 @@
 # Decisions
 
-One line per decision. Format: decision — reason.
-
-- Build stays on the provided Gradle 8.14.3 wrapper (not Maven) — keep the scaffold the challenge ships with; `./gradlew build` is the verify step.
-- Spring Boot 4.1.2 (latest stable 4.x at start) — all chosen libraries (springdoc 3.2.0, Testcontainers 2.0.5) support it, no fallback to 3.5.x needed.
-- Package root `com.mango.products` — kept from the provided scaffold.
-- `docker-compose.yml` keeps the provided 1 CPU / 1 GB limits on `app` and `benchmark` — the statement forbids changing them; only auxiliary containers are added.
-- MongoDB runs as an auxiliary container capped at 0.5 CPU / 1 GB with a 256 MB WiredTiger cache — fits the auxiliary-container limit with headroom for connections.
-- Serial GC in the container — the app gets 1 CPU, where G1's concurrent threads only add overhead.
-- CDS archive created by a training run at image build (`-Dspring.context.exit=onRefresh`) — `AutoCreateSharedArchive` alone would only help from the second start of the same container.
-- Boot jar extracted with `-Djarmode=tools` in the image — CDS cannot archive classes from nested jars.
-- Lazy initialization on in `default`, off in `test` — fast startup in production, fail-fast wiring in tests.
-- Actuator exposes only `health`, which includes the Mongo indicator — the compose healthcheck then means "app and database ready".
-- Native image is opt-in via `./gradlew bootBuildImage -Pnative` — Gradle equivalent of a Maven `native` profile; not required to build locally.
-- `./gradlew` is invoked as `sh gradlew` in the Dockerfile — the provided wrapper is committed without the executable bit.
-- `initDate < endDate` strictly (as the statement says) — a single-day price is rejected; with closed intervals `[d, d]` would otherwise be valid.
-- The open-end sentinel `9999-12-31` lives in `DateRange` — one place maps `null` to the sentinel, so the domain, Mongo filters and the web mapping never special-case open ranges; dates after it are rejected.
-- Domain exceptions are a sealed hierarchy without stack traces — expected outcomes (404/409 under load) should not pay for `fillInStackTrace`, and the web advice can switch over them exhaustively.
-- Positivity (`value > 0`) is a `Price` rule, not a `Money` rule — money can be zero or negative in general; a price cannot.
-- Currencies without a minor unit (`getDefaultFractionDigits() == -1`, e.g. XAU) are rejected — they have no defined scale for `amountMinor`.
+- Build stays on the provided Gradle 8.14.3 wrapper (not Maven): keep the scaffold the challenge ships with; `./gradlew build` is the verify step.
+- Spring Boot 4.1.2 (latest stable 4.x at start): all chosen libraries (springdoc 3.2.0, Testcontainers 2.0.5) support it, no fallback to 3.5.x needed.
+- Package root `com.mango.products`: kept from the provided scaffold.
+- `docker-compose.yml` keeps the provided 1 CPU / 1 GB limits on `app` and `benchmark`: the statement forbids changing them; only auxiliary containers are added.
+- MongoDB runs as an auxiliary container capped at 0.5 CPU / 1 GB with a 256 MB WiredTiger cache: fits the auxiliary-container limit with headroom for connections.
+- Serial GC in the container: the app gets 1 CPU, where G1's concurrent threads only add overhead.
+- CDS archive created by a training run at image build (`-Dspring.context.exit=onRefresh`): `AutoCreateSharedArchive` alone would only help from the second start of the same container.
+- Boot jar extracted with `-Djarmode=tools` in the image: CDS cannot archive classes from nested jars.
+- Lazy initialization on in `default`, off in `test`: fast startup in production, fail-fast wiring in tests.
+- Actuator exposes only `health`, which includes the Mongo indicator: the compose healthcheck then means "app and database ready".
+- Native image is opt-in via `./gradlew bootBuildImage -Pnative`: Gradle equivalent of a Maven `native` profile; not required to build locally.
+- `./gradlew` is invoked as `sh gradlew` in the Dockerfile: the provided wrapper is committed without the executable bit.
+- `initDate < endDate` strictly (as the statement says): a single-day price is rejected; with closed intervals `[d, d]` would otherwise be valid.
+- The open-end sentinel `9999-12-31` lives in `DateRange`: one place maps `null` to the sentinel, so the domain, Mongo filters and the web mapping never special-case open ranges; dates after it are rejected.
+- Domain exceptions are a sealed hierarchy without stack traces: expected outcomes (404/409 under load) should not pay for `fillInStackTrace`, and the web advice can switch over them exhaustively.
+- Positivity (`value > 0`) is a `Price` rule, not a `Money` rule: money can be zero or negative in general; a price cannot.
+- Currencies without a minor unit (`getDefaultFractionDigits() == -1`, e.g. XAU) are rejected: they have no defined scale for `amountMinor`.
+- Hexagonal layout `domain` / `application` / `adapters.in.web` / `adapters.out.mongo`, enforced by ArchUnit: the domain may only depend on `java.*`, adapters never depend on each other.
+- The repository port lives in `application.port.out`, not in `domain`: its signatures return `Mono`/`Flux`, and Reactor has no place in a plain-Java domain.
+- Use cases are concrete application services, one per use case, with no inbound port interfaces: a single implementation behind an interface adds indirection without a second adapter to justify it.
+- `ProductId` is a value object: ids cannot be mixed up with other strings in signatures, and blank ids fail in the domain.
+- The no-overlap invariant is guarded by a conditional atomic write exposed by the repository port, not by loading the aggregate: loading, checking and saving would need optimistic locking and retries to be correct under concurrency.

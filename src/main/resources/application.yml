@@ -17,7 +17,6 @@ logging:
   level:
     root: WARN
     com.mango.products: INFO
-    # Swagger UI is intentionally public for reviewers; drop springdoc's startup warning.
     org.springdoc.core.events: ERROR
 
 ---
@@ -26,5 +25,4 @@ spring:
     activate:
       on-profile: test
   main:
-    # Eager in tests so wiring errors fail fast instead of on first request.
     lazy-initialization: false

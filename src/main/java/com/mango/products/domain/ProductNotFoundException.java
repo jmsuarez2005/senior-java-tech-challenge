@@ -2,7 +2,7 @@ package com.mango.products.domain;
 
 public final class ProductNotFoundException extends DomainException {
 
-	public ProductNotFoundException(String productId) {
+	public ProductNotFoundException(ProductId productId) {
 		super("Product " + productId + " not found");
 	}
 

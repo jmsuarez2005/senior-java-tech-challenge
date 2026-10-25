@@ -5,7 +5,7 @@ import java.util.Currency;
 
 public final class PriceNotFoundException extends DomainException {
 
-	public PriceNotFoundException(String productId, LocalDate date, Currency currency) {
+	public PriceNotFoundException(ProductId productId, LocalDate date, Currency currency) {
 		super("Product " + productId + " has no " + currency + " price on " + date);
 	}
 

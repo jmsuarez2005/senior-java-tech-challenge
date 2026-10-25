@@ -18,14 +18,14 @@ class ProductTest {
 		Price later = price(19999, EUR, "2025-01-01");
 		Price earlier = price(9999, EUR, "2024-01-01");
 
-		Product product = new Product("p1", "Sneakers", null, List.of(later, earlier));
+		Product product = new Product(new ProductId("p1"), "Sneakers", null, List.of(later, earlier));
 
 		assertThat(product.prices()).containsExactly(earlier, later);
 	}
 
 	@Test
 	void requiresName() {
-		assertThatThrownBy(() -> new Product("p1", " ", null, List.of()))
+		assertThatThrownBy(() -> new Product(new ProductId("p1"), " ", null, List.of()))
 				.isInstanceOfSatisfying(DomainValidationException.class, e -> assertThat(e.field()).isEqualTo("name"));
 	}
 

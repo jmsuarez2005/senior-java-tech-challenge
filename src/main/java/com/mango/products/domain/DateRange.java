@@ -2,10 +2,7 @@ package com.mango.products.domain;
 
 import java.time.LocalDate;
 
-/**
- * Closed interval {@code [initDate, endDate]}: both days are included.
- * An open end ("until further notice") is stored as {@link #OPEN_END} so comparisons need no null checks.
- */
+// Closed interval, both days included. A missing end date becomes OPEN_END.
 public record DateRange(LocalDate initDate, LocalDate endDate) {
 
 	public static final LocalDate OPEN_END = LocalDate.of(9999, 12, 31);

@@ -36,6 +36,7 @@ dependencies {
 	testImplementation 'org.testcontainers:testcontainers-mongodb'
 	testImplementation 'io.projectreactor:reactor-test'
 	testImplementation 'io.projectreactor.tools:blockhound:1.0.18.RELEASE'
+	testImplementation 'com.tngtech.archunit:archunit-junit5:1.5.1'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

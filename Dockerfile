@@ -16,7 +16,7 @@ COPY --from=build --chown=app:app /extracted ./
 RUN chown app:app /app
 USER app
 ENV JAVA_OPTS="-XX:+UseSerialGC -XX:MaxRAMPercentage=75 -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile=/app/app.jsa"
-# Training run: starts the context and exits, leaving a CDS archive in the image.
+# CDS training run
 RUN java $JAVA_OPTS -Dspring.context.exit=onRefresh -jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
