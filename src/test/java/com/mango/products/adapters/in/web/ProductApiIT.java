@@ -1,87 +1,72 @@
 package com.mango.products.adapters.in.web;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 
-import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
-import org.springframework.context.annotation.Import;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.reactive.server.WebTestClient;
-import org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec;
 
-import com.mango.products.MongoTestcontainersConfiguration;
-import com.mango.products.RedisTestcontainersConfiguration;
-import com.mango.products.ThirdPartyBlockingAllowList;
+import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.RestAssured;
+import io.restassured.config.JsonConfig;
+import io.restassured.http.ContentType;
+import io.restassured.path.json.config.JsonPathConfig.NumberReturnType;
+import io.restassured.response.Response;
+import io.restassured.response.ValidatableResponse;
+import io.restassured.specification.RequestSpecification;
 
-import reactor.blockhound.BlockHound;
-import reactor.blockhound.BlockingOperationError;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
-
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureWebTestClient
-@ActiveProfiles("test")
-@Import({ MongoTestcontainersConfiguration.class, RedisTestcontainersConfiguration.class })
+@QuarkusTest
 class ProductApiIT {
 
-	@Autowired
-	WebTestClient client;
+	private static final String PRODUCT = """
+			{"name": "Zapatillas deportivas", "description": "Modelo 2025 edición limitada"}""";
 
 	@BeforeAll
-	static void installBlockHound() {
-		BlockHound.install(new ThirdPartyBlockingAllowList());
-	}
-
-	@Test
-	void blockHoundIsActive() {
-		Mono<Long> blocking = Mono.delay(Duration.ofMillis(1)).doOnNext(tick -> sleep());
-
-		StepVerifier.create(blocking).expectError(BlockingOperationError.class).verify();
+	static void readNumbersAsDoubles() {
+		RestAssured.config = RestAssured.config().jsonConfig(JsonConfig.jsonConfig().numberReturnType(NumberReturnType.DOUBLE));
 	}
 
 	@Test
 	void createsProduct() {
-		client.post().uri("/products")
-				.bodyValue(Map.of("name", "Zapatillas deportivas", "description", "Modelo 2025 edición limitada"))
-				.exchange()
-				.expectStatus().isCreated()
-				.expectHeader().value("Location", location -> assertThat(location).matches("/products/[0-9a-f]{24}"))
-				.expectBody()
-				.jsonPath("$.id").isNotEmpty()
-				.jsonPath("$.name").isEqualTo("Zapatillas deportivas")
-				.jsonPath("$.description").isEqualTo("Modelo 2025 edición limitada");
+		json().body(PRODUCT).post("/products").then()
+				.statusCode(201)
+				.header("Location", matchesPattern(".*/products/[0-9a-f]{24}"))
+				.body("id", notNullValue())
+				.body("name", equalTo("Zapatillas deportivas"))
+				.body("description", equalTo("Modelo 2025 edición limitada"));
 	}
 
 	@Test
 	void getsProduct() {
 		String id = createProduct();
 
-		client.get().uri("/products/{id}", id).exchange()
-				.expectStatus().isOk()
-				.expectBody()
-				.jsonPath("$.id").isEqualTo(id)
-				.jsonPath("$.name").isEqualTo("Zapatillas deportivas");
+		given().get("/products/{id}", id).then()
+				.statusCode(200)
+				.body("id", equalTo(id))
+				.body("name", equalTo("Zapatillas deportivas"));
 	}
 
 	@Test
 	void addsPrice() {
 		String id = createProduct();
 
-		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30"))
-				.expectStatus().isCreated()
-				.expectBody()
-				.jsonPath("$.value").isEqualTo(99.99)
-				.jsonPath("$.initDate").isEqualTo("2024-01-01")
-				.jsonPath("$.endDate").isEqualTo("2024-06-30");
+		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")).then()
+				.statusCode(201)
+				.body("value", equalTo(99.99))
+				.body("initDate", equalTo("2024-01-01"))
+				.body("endDate", equalTo("2024-06-30"));
 	}
 
 	@ParameterizedTest(name = "{0} -> {1}")
@@ -89,81 +74,70 @@ class ProductApiIT {
 	void returnsPriceInForceIncludingBothEnds(String date, double expected) {
 		String id = createProductWithStatementPrices();
 
-		client.get().uri("/products/{id}/prices?date={date}", id, date).exchange()
-				.expectStatus().isOk()
-				.expectBody().json("{\"value\": " + expected + "}", true);
+		given().get("/products/{id}/prices?date={date}", id, date).then()
+				.statusCode(200)
+				.body("$", equalTo(Map.of("value", expected)));
 	}
 
 	@Test
 	void singularPriceAliasReturnsTheSamePrice() {
 		String id = createProductWithStatementPrices();
 
-		client.get().uri("/products/{id}/price?date=2024-04-15", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().json("{\"value\": 99.99}", true);
+		given().get("/products/{id}/price?date=2024-04-15", id).then()
+				.statusCode(200)
+				.body("$", equalTo(Map.of("value", 99.99)));
 	}
 
 	@Test
 	void returnsNotFoundWhenNoPriceIsInForce() {
 		String id = createProductWithStatementPrices();
 
-		expectProblem(client.get().uri("/products/{id}/prices?date=2024-07-01", id).exchange(), 404);
+		expectProblem(given().get("/products/{id}/prices?date=2024-07-01", id).then(), 404);
 	}
 
 	@Test
 	void returnsHistoryOrderedByInitDate() {
 		String id = createProduct();
-		addPrice(id, Map.of("value", 199.99, "initDate", "2025-01-01", "endDate", "2025-06-30")).expectStatus().isCreated();
-		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")).expectStatus().isCreated();
+		addPrice(id, Map.of("value", 199.99, "initDate", "2025-01-01", "endDate", "2025-06-30")).then().statusCode(201);
+		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")).then().statusCode(201);
 
-		client.get().uri("/products/{id}/prices", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().json("""
-						{
-						  "name": "Zapatillas deportivas",
-						  "description": "Modelo 2025 edición limitada",
-						  "prices": [
-						    { "value": 99.99, "initDate": "2024-01-01", "endDate": "2024-06-30" },
-						    { "value": 199.99, "initDate": "2025-01-01", "endDate": "2025-06-30" }
-						  ]
-						}
-						""", true);
+		given().get("/products/{id}/prices", id).then()
+				.statusCode(200)
+				.body("$", equalTo(Map.of(
+						"name", "Zapatillas deportivas",
+						"description", "Modelo 2025 edición limitada",
+						"prices", List.of(
+								Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30"),
+								Map.of("value", 199.99, "initDate", "2025-01-01", "endDate", "2025-06-30")))));
 	}
 
 	@Test
 	void readsSeeANewPriceRightAfterItIsAdded() {
 		String id = createProductWithStatementPrices();
-		client.get().uri("/products/{id}/prices", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.prices.length()").isEqualTo(2);
+		given().get("/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(2));
 
-		addPrice(id, Map.of("value", 149.99, "initDate", "2024-07-01", "endDate", "2024-12-31")).expectStatus().isCreated();
+		addPrice(id, Map.of("value", 149.99, "initDate", "2024-07-01", "endDate", "2024-12-31")).then().statusCode(201);
 
-		client.get().uri("/products/{id}/prices", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.prices.length()").isEqualTo(3);
-		client.get().uri("/products/{id}/price?date=2024-10-01", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.value").isEqualTo(149.99);
+		given().get("/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(3));
+		given().get("/products/{id}/price?date=2024-10-01", id).then().statusCode(200).body("value", equalTo(149.99));
 	}
 
 	@Test
 	void historyShowsOpenEndAsNull() {
 		String id = createProduct();
-		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01")).expectStatus().isCreated();
+		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01")).then().statusCode(201);
 
-		client.get().uri("/products/{id}/prices", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().json("""
-						{ "prices": [ { "value": 99.99, "initDate": "2024-01-01", "endDate": null } ] }
-						""");
+		given().get("/products/{id}/prices", id).then()
+				.statusCode(200)
+				.body("prices[0]", hasKey("endDate"))
+				.body("prices[0].endDate", nullValue());
 	}
 
 	@Test
 	void rejectsOverlappingPriceWithConflict() {
 		String id = createProductWithStatementPrices();
 
-		expectProblem(addPrice(id, Map.of("value", 79.99, "initDate", "2024-06-30", "endDate", "2024-12-31")), 409);
+		expectProblem(addPrice(id, Map.of("value", 79.99, "initDate", "2024-06-30", "endDate", "2024-12-31")).then(), 409);
 	}
 
 	@Test
@@ -171,14 +145,10 @@ class ProductApiIT {
 		String id = createProductWithStatementPrices();
 
 		addPrice(id, Map.of("value", 109.99, "currency", "USD", "initDate", "2024-01-01", "endDate", "2024-06-30"))
-				.expectStatus().isCreated();
+				.then().statusCode(201);
 
-		client.get().uri("/products/{id}/price?date=2024-04-15&currency=USD", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.value").isEqualTo(109.99);
-		client.get().uri("/products/{id}/price?date=2024-04-15", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.value").isEqualTo(99.99);
+		given().get("/products/{id}/price?date=2024-04-15&currency=USD", id).then().statusCode(200).body("value", equalTo(109.99));
+		given().get("/products/{id}/price?date=2024-04-15", id).then().statusCode(200).body("value", equalTo(99.99));
 	}
 
 	@ParameterizedTest(name = "{0}")
@@ -194,88 +164,67 @@ class ProductApiIT {
 	void rejectsInvalidPrice(String scenario, String body, String field) {
 		String id = createProduct();
 
-		ResponseSpec response = client.post().uri("/products/{id}/prices", id)
-				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(body)
-				.exchange();
-
-		expectProblem(response, 400).jsonPath("$.errors[0].field").isEqualTo(field);
+		expectProblem(json().body(body).post("/products/{id}/prices", id).then(), 400)
+				.body("errors[0].field", equalTo(field));
 	}
 
 	@Test
 	void reportsAllViolationsAndStoresNothing() {
 		String id = createProduct();
 
-		expectProblem(addPrice(id, Map.of("value", 9.999, "initDate", "2024-06-30", "endDate", "2024-01-01")), 400)
-				.jsonPath("$.errors.length()").isEqualTo(2)
-				.jsonPath("$.errors[?(@.field == 'value')]").exists()
-				.jsonPath("$.errors[?(@.field == 'endDate')]").exists();
+		expectProblem(addPrice(id, Map.of("value", 9.999, "initDate", "2024-06-30", "endDate", "2024-01-01")).then(), 400)
+				.body("errors.field", containsInAnyOrder("value", "endDate"));
 
-		client.get().uri("/products/{id}/prices", id).exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.prices").isEmpty();
+		given().get("/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(0));
 	}
 
 	@Test
 	void rejectsMalformedDate() {
 		String id = createProduct();
 
-		expectProblem(client.get().uri("/products/{id}/prices?date=2024-13-01", id).exchange(), 400);
+		expectProblem(given().get("/products/{id}/prices?date=2024-13-01", id).then(), 400)
+				.body("errors.field", contains("date"));
 	}
 
 	@Test
 	void rejectsProductWithoutName() {
-		ResponseSpec response = client.post().uri("/products").bodyValue(Map.of("name", " ")).exchange();
-
-		expectProblem(response, 400).jsonPath("$.errors[0].field").isEqualTo("name");
+		expectProblem(json().body(Map.of("name", " ")).post("/products").then(), 400)
+				.body("errors[0].field", equalTo("name"));
 	}
 
 	@Test
 	void returnsNotFoundForUnknownProduct() {
 		String unknown = "65f0c0ffee0000000000beef";
 
-		expectProblem(client.get().uri("/products/{id}", unknown).exchange(), 404);
-		expectProblem(client.get().uri("/products/{id}/prices", unknown).exchange(), 404);
-		expectProblem(client.get().uri("/products/{id}/prices?date=2024-01-01", unknown).exchange(), 404);
-		expectProblem(addPrice(unknown, Map.of("value", 10, "initDate", "2024-01-01")), 404);
+		expectProblem(given().get("/products/{id}", unknown).then(), 404);
+		expectProblem(given().get("/products/{id}/prices", unknown).then(), 404);
+		expectProblem(given().get("/products/{id}/prices?date=2024-01-01", unknown).then(), 404);
+		expectProblem(addPrice(unknown, Map.of("value", 10, "initDate", "2024-01-01")).then(), 404);
 	}
 
-	private String createProduct() {
-		return client.post().uri("/products")
-				.bodyValue(Map.of("name", "Zapatillas deportivas", "description", "Modelo 2025 edición limitada"))
-				.exchange()
-				.expectStatus().isCreated()
-				.expectBody(Map.class)
-				.returnResult()
-				.getResponseBody()
-				.get("id")
-				.toString();
+	private static String createProduct() {
+		return json().body(PRODUCT).post("/products").then().statusCode(201).extract().path("id");
 	}
 
-	private String createProductWithStatementPrices() {
+	private static String createProductWithStatementPrices() {
 		String id = createProduct();
-		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")).expectStatus().isCreated();
-		addPrice(id, Map.of("value", 199.99, "initDate", "2025-01-01", "endDate", "2025-06-30")).expectStatus().isCreated();
+		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")).then().statusCode(201);
+		addPrice(id, Map.of("value", 199.99, "initDate", "2025-01-01", "endDate", "2025-06-30")).then().statusCode(201);
 		return id;
 	}
 
-	private ResponseSpec addPrice(String id, Map<String, ?> body) {
-		return client.post().uri("/products/{id}/prices", id).bodyValue(body).exchange();
+	private static Response addPrice(String id, Map<String, ?> body) {
+		return json().body(body).post("/products/{id}/prices", id);
 	}
 
-	private static WebTestClient.BodyContentSpec expectProblem(ResponseSpec response, int status) {
-		return response.expectStatus().isEqualTo(status)
-				.expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
-				.expectBody().jsonPath("$.status").isEqualTo(status);
+	private static RequestSpecification json() {
+		return given().contentType(ContentType.JSON);
 	}
 
-	private static void sleep() {
-		try {
-			Thread.sleep(10);
-		}
-		catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-		}
+	private static ValidatableResponse expectProblem(ValidatableResponse response, int status) {
+		return response.statusCode(status)
+				.contentType("application/problem+json")
+				.body("status", equalTo(status));
 	}
 
 }

@@ -4,38 +4,57 @@ import java.time.LocalDate;
 import java.util.Currency;
 import java.util.List;
 
+import org.bson.Document;
+import org.bson.types.ObjectId;
+
 import com.mango.products.domain.DateRange;
 import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
+// Dates are stored as ISO yyyy-MM-dd strings: they sort like dates and carry no time zone.
 final class ProductDocumentMapper {
+
+	static final String ID = "_id";
+	static final String NAME = "name";
+	static final String DESCRIPTION = "description";
+	static final String PRICES = "prices";
+	static final String VERSION = "version";
+	static final String AMOUNT_MINOR = "amountMinor";
+	static final String CURRENCY = "currency";
+	static final String INIT_DATE = "initDate";
+	static final String END_DATE = "endDate";
 
 	private ProductDocumentMapper() {
 	}
 
-	static ProductDocument toDocument(Product product) {
-		List<PriceDocument> prices = product.prices().stream().map(ProductDocumentMapper::toDocument).toList();
-		return new ProductDocument(product.id().value(), product.name(), product.description(), prices,
-				product.version());
+	static Document toDocument(Product product) {
+		return new Document(ID, new ObjectId(product.id().value()))
+				.append(NAME, product.name())
+				.append(DESCRIPTION, product.description())
+				.append(PRICES, product.prices().stream().map(ProductDocumentMapper::toDocument).toList())
+				.append(VERSION, product.version());
 	}
 
-	static PriceDocument toDocument(Price price) {
-		return new PriceDocument(price.money().amountMinor(), price.money().currency().getCurrencyCode(),
-				price.period().initDate().toString(), price.period().endDate().toString());
+	static Document toDocument(Price price) {
+		return new Document(AMOUNT_MINOR, price.money().amountMinor())
+				.append(CURRENCY, price.money().currency().getCurrencyCode())
+				.append(INIT_DATE, price.period().initDate().toString())
+				.append(END_DATE, price.period().endDate().toString());
 	}
 
-	static Product toDomain(ProductDocument document) {
-		List<Price> prices = document.prices() == null ? List.of()
-				: document.prices().stream().map(ProductDocumentMapper::toDomain).toList();
-		return new Product(new ProductId(document.id()), document.name(), document.description(), prices,
-				document.version());
+	static Product toDomain(Document document) {
+		List<Price> prices = document.getList(PRICES, Document.class, List.of()).stream()
+				.map(ProductDocumentMapper::toPrice)
+				.toList();
+		return new Product(new ProductId(document.getObjectId(ID).toHexString()), document.getString(NAME),
+				document.getString(DESCRIPTION), prices, document.getLong(VERSION));
 	}
 
-	static Price toDomain(PriceDocument document) {
-		return new Price(new Money(document.amountMinor(), Currency.getInstance(document.currency())),
-				new DateRange(LocalDate.parse(document.initDate()), LocalDate.parse(document.endDate())));
+	private static Price toPrice(Document document) {
+		return new Price(new Money(document.getLong(AMOUNT_MINOR), Currency.getInstance(document.getString(CURRENCY))),
+				new DateRange(LocalDate.parse(document.getString(INIT_DATE)), LocalDate.parse(document.getString(END_DATE))));
 	}
 
 }

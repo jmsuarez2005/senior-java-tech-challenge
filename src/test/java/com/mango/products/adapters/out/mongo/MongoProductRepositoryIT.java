@@ -1,18 +1,20 @@
 package com.mango.products.adapters.out.mongo;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Currency;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.mongodb.test.autoconfigure.DataMongoTest;
-import org.springframework.context.annotation.Import;
-
-import com.mango.products.MongoTestcontainersConfiguration;
 import com.mango.products.domain.DateRange;
 import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
@@ -21,32 +23,28 @@ import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
 
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
 
-@DataMongoTest
-@Import({ MongoTestcontainersConfiguration.class, MongoProductRepository.class })
+@QuarkusTest
 class MongoProductRepositoryIT {
 
 	private static final Currency EUR = Currency.getInstance("EUR");
 	private static final Currency USD = Currency.getInstance("USD");
 
-	@Autowired
+	@Inject
 	MongoProductRepository repository;
 
 	@Test
 	void createdProductCanBeFoundById() {
-		Product product = newProduct();
+		Product product = repository.create(newProduct());
 
-		StepVerifier.create(repository.create(product).then(repository.findById(product.id())))
-				.expectNext(product)
-				.verifyComplete();
+		assertThat(repository.findById(product.id())).contains(product);
 	}
 
 	@Test
 	void findByIdOfUnknownProductIsEmpty() {
-		StepVerifier.create(repository.findById(repository.nextId())).verifyComplete();
+		assertThat(repository.findById(repository.nextId())).isEmpty();
 	}
 
 	@Test
@@ -55,13 +53,11 @@ class MongoProductRepositoryIT {
 		Price later = price("199.99", EUR, "2025-01-01", "2025-06-30");
 		Price earlier = price("99.99", EUR, "2024-01-01", "2024-06-30");
 
-		Mono<Product> stored = repository.addPriceIfNoOverlap(id, later)
-				.then(repository.addPriceIfNoOverlap(id, earlier))
-				.then(repository.findById(id));
+		repository.addPriceIfNoOverlap(id, later);
+		repository.addPriceIfNoOverlap(id, earlier);
 
-		StepVerifier.create(stored)
-				.assertNext(product -> assertThat(product.prices()).containsExactly(earlier, later))
-				.verifyComplete();
+		assertThat(repository.findById(id)).hasValueSatisfying(
+				product -> assertThat(product.prices()).containsExactly(earlier, later));
 	}
 
 	@Test
@@ -69,67 +65,76 @@ class MongoProductRepositoryIT {
 		ProductId id = createProduct();
 		Price price = price("99.99", EUR, "2024-01-01", null);
 
-		StepVerifier.create(repository.addPriceIfNoOverlap(id, price))
-				.assertNext(product -> {
-					assertThat(product.prices()).containsExactly(price);
-					assertThat(product.version()).isEqualTo(1);
-				})
-				.verifyComplete();
+		Product stored = repository.addPriceIfNoOverlap(id, price);
+
+		assertThat(stored.prices()).containsExactly(price);
+		assertThat(stored.version()).isEqualTo(1);
 	}
 
 	@Test
 	void rejectsPriceOverlappingByASingleDay() {
 		ProductId id = createProduct();
-		repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30")).block();
+		repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30"));
 
-		StepVerifier.create(repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-06-30", "2024-12-31")))
-				.expectError(PriceOverlapException.class)
-				.verify();
+		assertThatThrownBy(() -> repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-06-30", "2024-12-31")))
+				.isInstanceOf(PriceOverlapException.class);
 	}
 
 	@Test
 	void acceptsAdjacentPriceAndSamePeriodInAnotherCurrency() {
 		ProductId id = createProduct();
-		repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30")).block();
+		repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30"));
 
-		StepVerifier.create(repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-07-01", null))
-				.then(repository.addPriceIfNoOverlap(id, price("109.99", USD, "2024-01-01", "2024-06-30"))))
-				.expectNextCount(1)
-				.verifyComplete();
+		repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-07-01", null));
+		Product stored = repository.addPriceIfNoOverlap(id, price("109.99", USD, "2024-01-01", "2024-06-30"));
+
+		assertThat(stored.prices()).hasSize(3);
 	}
 
 	@Test
 	void addingPriceToUnknownProductFails() {
-		StepVerifier.create(repository.addPriceIfNoOverlap(repository.nextId(), price("99.99", EUR, "2024-01-01", null)))
-				.expectError(ProductNotFoundException.class)
-				.verify();
+		assertThatThrownBy(() -> repository.addPriceIfNoOverlap(repository.nextId(), price("99.99", EUR, "2024-01-01", null)))
+				.isInstanceOf(ProductNotFoundException.class);
 	}
 
 	@Test
-	void concurrentOverlappingInsertsLetExactlyOneThrough() {
+	void concurrentOverlappingInsertsLetExactlyOneThrough() throws InterruptedException {
 		ProductId id = createProduct();
 		int attempts = 50;
+		List<Callable<Boolean>> inserts = IntStream.rangeClosed(1, attempts)
+				.<Callable<Boolean>>mapToObj(i -> () -> tryInsert(id, price(i + ".00", EUR, "2024-01-01", "2024-12-31")))
+				.toList();
 
-		List<Mono<Boolean>> inserts = Flux.range(1, attempts)
-				.map(i -> repository.addPriceIfNoOverlap(id, price(i + ".00", EUR, "2024-01-01", "2024-12-31"))
-						.thenReturn(true)
-						.onErrorResume(PriceOverlapException.class, e -> Mono.just(false)))
-				.collectList()
-				.block();
+		List<Boolean> results;
+		try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+			results = executor.invokeAll(inserts).stream().map(MongoProductRepositoryIT::resultOf).toList();
+		}
 
-		StepVerifier.create(Flux.merge(inserts).collectList())
-				.assertNext(results -> {
-					assertThat(results).hasSize(attempts);
-					assertThat(results).filteredOn(Boolean::booleanValue).hasSize(1);
-				})
-				.verifyComplete();
-		StepVerifier.create(repository.findById(id))
-				.assertNext(product -> assertThat(product.prices()).hasSize(1))
-				.verifyComplete();
+		assertThat(results).hasSize(attempts).filteredOn(Boolean::booleanValue).hasSize(1);
+		assertThat(repository.findById(id)).hasValueSatisfying(product -> assertThat(product.prices()).hasSize(1));
+	}
+
+	private boolean tryInsert(ProductId id, Price price) {
+		try {
+			repository.addPriceIfNoOverlap(id, price);
+			return true;
+		}
+		catch (PriceOverlapException e) {
+			return false;
+		}
+	}
+
+	private static Boolean resultOf(Future<Boolean> future) {
+		try {
+			return future.get();
+		}
+		catch (InterruptedException | ExecutionException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 
 	private ProductId createProduct() {
-		return repository.create(newProduct()).map(Product::id).block();
+		return repository.create(newProduct()).id();
 	}
 
 	private Product newProduct() {

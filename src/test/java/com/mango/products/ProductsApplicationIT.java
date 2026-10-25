@@ -1,34 +1,23 @@
 package com.mango.products;
 
+import static io.restassured.RestAssured.get;
+import static org.hamcrest.Matchers.equalTo;
+
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
-import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.web.reactive.server.WebTestClient;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureWebTestClient
-@ActiveProfiles("test")
-@Import(MongoTestcontainersConfiguration.class)
-@TestPropertySource(properties = "products.cache.enabled=false")
+import io.quarkus.test.junit.QuarkusTest;
+
+@QuarkusTest
 class ProductsApplicationIT {
-
-	@Autowired
-	WebTestClient client;
 
 	@Test
 	void healthIsUpWithMongo() {
-		client.get().uri("/actuator/health").exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.status").isEqualTo("UP");
+		get("/actuator/health").then().statusCode(200).body("status", equalTo("UP"));
 	}
 
 	@Test
-	void onlyHealthIsExposed() {
-		client.get().uri("/actuator/env").exchange().expectStatus().isNotFound();
+	void nothingElseIsExposedUnderActuator() {
+		get("/actuator/env").then().statusCode(404);
 	}
 
 }

@@ -1,16 +1,14 @@
 package com.mango.products.application;
 
-import org.springframework.stereotype.Service;
-
 import com.mango.products.application.port.out.ProductCache;
 import com.mango.products.application.port.out.ProductRepository;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
 
-import reactor.core.publisher.Mono;
+import jakarta.enterprise.context.ApplicationScoped;
 
-@Service
+@ApplicationScoped
 public class FindProduct {
 
 	private final ProductRepository products;
@@ -21,11 +19,12 @@ public class FindProduct {
 		this.cache = cache;
 	}
 
-	public Mono<Product> execute(ProductId productId) {
-		return cache.get(productId)
-				.switchIfEmpty(Mono.defer(() -> products.findById(productId)
-						.flatMap(product -> cache.put(product).thenReturn(product))))
-				.switchIfEmpty(Mono.error(() -> new ProductNotFoundException(productId)));
+	public Product execute(ProductId productId) {
+		return cache.get(productId).orElseGet(() -> {
+			Product product = products.findById(productId).orElseThrow(() -> new ProductNotFoundException(productId));
+			cache.put(product);
+			return product;
+		});
 	}
 
 }
