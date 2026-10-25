@@ -1,9 +1,14 @@
 package com.mango.products;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.apache.tomcat.util.threads.VirtualThreadExecutor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.tomcat.TomcatWebServer;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -19,6 +24,9 @@ class ProductsApplicationIT {
 	@Autowired
 	RestTestClient client;
 
+	@Autowired
+	WebServerApplicationContext context;
+
 	@Test
 	void healthIsUpWithMongo() {
 		client.get().uri("/actuator/health").exchange()
@@ -29,6 +37,14 @@ class ProductsApplicationIT {
 	@Test
 	void onlyHealthIsExposed() {
 		client.get().uri("/actuator/env").exchange().expectStatus().isNotFound();
+	}
+
+	@Test
+	void tomcatServesRequestsOnVirtualThreads() {
+		TomcatWebServer server = (TomcatWebServer) context.getWebServer();
+
+		assertThat(server.getTomcat().getConnector().getProtocolHandler().getExecutor())
+				.isInstanceOf(VirtualThreadExecutor.class);
 	}
 
 }
