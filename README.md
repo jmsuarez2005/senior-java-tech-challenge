@@ -20,6 +20,8 @@ Only the API with MongoDB and Redis:
 docker compose up --build app
 ```
 
+Redis is optional and off by default; see [Load test](#load-test) to switch it on.
+
 The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui.html` and health at `/actuator/health`.
 
 For local development, start MongoDB and Redis in Docker and run the app with the Gradle wrapper (Java 21):
@@ -220,12 +222,18 @@ Startup and footprint:
 2. runs 2 minutes: 30 s ramp-up to 200 virtual users, then 90 s steady,
 3. mixes 70% price in force, 20% history and 10% new prices (on dates that never overlap),
 4. fails if `http_req_failed >= 1%` or `p(95) >= 50 ms`,
-5. writes the full report to `perf/results/summary.json`.
+5. writes the full report to `perf/results/summary-<run>.json`.
 
 The script is [perf/load-test.js](perf/load-test.js). Load parameters can be overridden, for example:
 
 ```bash
 docker compose run --rm -e VUS=50 -e STEADY=30s benchmark
+```
+
+The base infrastructure is the minimum: app, MongoDB and k6. Redis is an improvement you switch on per run:
+
+```bash
+RUN=with-redis PRODUCTS_CACHE_ENABLED=true docker compose --profile cache up --build
 ```
 
 [scripts/seed.sh](scripts/seed.sh) seeds any running instance without k6:
@@ -239,14 +247,7 @@ left untouched. MongoDB and Redis are auxiliary containers, each capped at 0.5 C
 
 ### Results
 
-| Metric | Value |
-|---|---|
-| Startup (`Started ... in`) | _to fill_ |
-| Requests per second | _to fill_ |
-| p95 latency | _to fill_ |
-| p99 latency | _to fill_ |
-| Failed requests | _to fill_ |
-| App memory under load | _to fill_ |
+Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.md).
 
 ## Known limits
 
