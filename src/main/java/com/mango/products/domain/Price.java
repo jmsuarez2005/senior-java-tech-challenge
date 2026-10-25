@@ -1,5 +1,7 @@
 package com.mango.products.domain;
 
+import java.time.LocalDate;
+import java.util.Currency;
 import java.util.Objects;
 
 public record Price(Money money, DateRange period) {
@@ -14,6 +16,10 @@ public record Price(Money money, DateRange period) {
 
 	public boolean overlaps(Price other) {
 		return money.currency().equals(other.money.currency()) && period.overlaps(other.period);
+	}
+
+	public boolean appliesTo(LocalDate date, Currency currency) {
+		return money.currency().equals(currency) && period.contains(date);
 	}
 
 }

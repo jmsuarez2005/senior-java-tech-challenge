@@ -1,20 +1,20 @@
 # Products API
 
 Products with historical prices. A product can have many prices over time, but only one price in force per day
-and currency. Built with Spring Boot 4 on WebFlux and reactive MongoDB.
+and currency. Built with Spring Boot 4 on WebFlux, reactive MongoDB and a Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Running it
 
-Everything (API, MongoDB and the k6 load test) with one command:
+Everything (API, MongoDB, Redis and the k6 load test) with one command:
 
 ```bash
 docker compose up --build
 ```
 
-Only the API and its database:
+Only the API with MongoDB and Redis:
 
 ```bash
 docker compose up --build app
@@ -22,14 +22,14 @@ docker compose up --build app
 
 The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui.html` and health at `/actuator/health`.
 
-For local development, start MongoDB in Docker and run the app with the Gradle wrapper (Java 21):
+For local development, start MongoDB and Redis in Docker and run the app with the Gradle wrapper (Java 21):
 
 ```bash
-docker compose up -d mongo
+docker compose up -d mongo redis
 sh gradlew bootRun
 ```
 
-Tests need a running Docker daemon (Testcontainers starts MongoDB):
+Tests need a running Docker daemon (Testcontainers starts MongoDB and Redis):
 
 ```bash
 sh gradlew build
@@ -110,9 +110,10 @@ Hexagonal, with the dependency rule checked by ArchUnit on every build:
 
 ```
 adapters/in/web      controllers, request/response records, input validation, problem details
-application          one class per use case, plus the outbound port ProductRepository
+application          one class per use case, plus the outbound ports ProductRepository and ProductCache
 domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
 adapters/out/mongo   MongoDB documents, mapping and the ProductRepository implementation
+adapters/out/redis   the ProductCache implementation
 ```
 
 A request is validated twice, on purpose. The web adapter checks it first (field constraints plus a cross-field
@@ -125,26 +126,25 @@ once.
 One `products` collection; each document holds its prices:
 
 ```json
-{ "_id": ObjectId, "name": "...", "description": "...",
+{ "_id": ObjectId, "name": "...", "description": "...", "version": 2,
   "prices": [ { "amountMinor": 9999, "currency": "EUR", "initDate": "2024-01-01", "endDate": "2024-06-30" } ] }
 ```
 
-Every operation the API needs is a lookup by `_id`, so the default index is the only one. Reading the history is
-one document read. Reading the price in force is one read with an `$elemMatch` projection, so MongoDB returns a
-single price instead of the whole history. A product without a match comes back without `prices`, which tells
-"unknown product" from "no price that day" in the same round trip.
+Every operation the API needs is a lookup by `_id`, so the default index is the only one. The whole product,
+history included, is one document read; the price in force on a date is then picked in memory by the aggregate
+(`Product.priceAt`). `version` grows by one with every price added.
 
 ### No overlap, enforced atomically
 
-Adding a price is a single `updateOne`:
+Adding a price is a single `findAndModify` that returns the stored document:
 
 ```
 filter: { _id: id, prices: { $not: { $elemMatch: { currency: c, initDate: { $lte: newEnd }, endDate: { $gte: newInit } } } } }
-update: { $push: { prices: newPrice } }
+update: { $push: { prices: newPrice }, $inc: { version: 1 } }
 ```
 
 MongoDB applies the filter and the update atomically on one document, so two concurrent requests cannot both
-pass the check. There are no locks in Java, no transactions and no read-check-write. If nothing was modified, a
+pass the check. There are no locks in Java, no transactions and no read-check-write. If nothing matched, a
 second query (`exists`) tells a 404 from a 409; that query only runs when the insert is rejected. An integration
 test fires 50 overlapping inserts at once and expects exactly one to succeed.
 
@@ -152,6 +152,23 @@ The relational equivalent is PostgreSQL's exclusion constraint
 (`EXCLUDE USING gist (product_id WITH =, currency WITH =, daterange(init_date, end_date, '[]') WITH &&)`).
 It is just as correct and arguably more declarative. MongoDB wins here on the read path: the history and the price
 in force are one document lookup with no join, and the prices of a product are always read together.
+
+### Redis cache
+
+The first load test showed MongoDB pinned at its 0.5 CPU limit while the app was mostly idle, with 90% of the
+traffic being reads. Products are now cached in Redis, cache-aside, behind the `ProductCache` port:
+
+- A read tries Redis first. On a miss it loads the product from MongoDB and stores it.
+- Adding a price stores the product returned by the atomic write, so the next read already sees the new price.
+- Every write to the cache is a compare-and-set on `version` (a small Lua script). A slow reader that loaded the
+  product before a price was added can never put that older copy back over the newer one.
+- The cache fails open: if Redis is down or slow (500 ms timeout), the request is served from MongoDB and the
+  error is logged. Redis is not part of the health check for the same reason.
+- Redis runs without persistence, with `maxmemory 256mb`, LRU eviction and a 10-minute TTL as a safety net.
+
+Redis was chosen over an in-process cache because it stays correct when the API runs on several instances.
+The cost is a network round trip and JSON decoding on every read, which an in-process near cache in front of
+Redis would remove if profiling shows it matters.
 
 ### Open end as a sentinel
 
@@ -218,7 +235,7 @@ scripts/seed.sh http://localhost:8080 1000 5
 ```
 
 Resource limits in `docker-compose.yml` are the ones provided by the challenge for `app` and `benchmark` and are
-left untouched. MongoDB is an auxiliary container capped at 0.5 CPU and 1 GB.
+left untouched. MongoDB and Redis are auxiliary containers, each capped at 0.5 CPU and 1 GB.
 
 ### Results
 
@@ -237,6 +254,6 @@ left untouched. MongoDB is an auxiliary container capped at 0.5 CPU and 1 GB.
   (one document per product and period) keeps the same queries.
 - Prices are immutable; there are no update or delete endpoints yet. "Updating" would mean closing the current
   price and adding a new one.
-- With MongoDB capped at half a CPU, it is the first resource to saturate under read-heavy load.
+- Writes always go to MongoDB, capped at half a CPU; a write-heavy load would saturate it before the app.
 - No authentication.
 - The history is not paginated; a product's prices are returned in one response.

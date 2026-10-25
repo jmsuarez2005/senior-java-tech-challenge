@@ -19,6 +19,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec;
 
 import com.mango.products.MongoTestcontainersConfiguration;
+import com.mango.products.RedisTestcontainersConfiguration;
 import com.mango.products.ThirdPartyBlockingAllowList;
 
 import reactor.blockhound.BlockHound;
@@ -29,7 +30,7 @@ import reactor.test.StepVerifier;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 @ActiveProfiles("test")
-@Import(MongoTestcontainersConfiguration.class)
+@Import({ MongoTestcontainersConfiguration.class, RedisTestcontainersConfiguration.class })
 class ProductApiIT {
 
 	@Autowired
@@ -127,6 +128,23 @@ class ProductApiIT {
 						  ]
 						}
 						""", true);
+	}
+
+	@Test
+	void readsSeeANewPriceRightAfterItIsAdded() {
+		String id = createProductWithStatementPrices();
+		client.get().uri("/products/{id}/prices", id).exchange()
+				.expectStatus().isOk()
+				.expectBody().jsonPath("$.prices.length()").isEqualTo(2);
+
+		addPrice(id, Map.of("value", 149.99, "initDate", "2024-07-01", "endDate", "2024-12-31")).expectStatus().isCreated();
+
+		client.get().uri("/products/{id}/prices", id).exchange()
+				.expectStatus().isOk()
+				.expectBody().jsonPath("$.prices.length()").isEqualTo(3);
+		client.get().uri("/products/{id}/price?date=2024-10-01", id).exchange()
+				.expectStatus().isOk()
+				.expectBody().jsonPath("$.value").isEqualTo(149.99);
 	}
 
 	@Test

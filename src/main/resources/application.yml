@@ -6,12 +6,24 @@ spring:
     banner-mode: off
   mongodb:
     uri: ${MONGODB_URI:mongodb://localhost:27017/products}
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      timeout: 500ms
+      connect-timeout: 2s
+
+products:
+  cache:
+    ttl: 10m
 
 management:
   endpoints:
     web:
       exposure:
         include: health
+  health:
+    redis:
+      enabled: false
 
 logging:
   level:

@@ -1,7 +1,5 @@
 package com.mango.products.application;
 
-import java.util.List;
-
 import org.springframework.stereotype.Service;
 
 import com.mango.products.application.port.out.ProductRepository;
@@ -19,7 +17,7 @@ public class CreateProduct {
 	}
 
 	public Mono<Product> execute(String name, String description) {
-		return Mono.fromCallable(() -> new Product(products.nextId(), name, description, List.of()))
+		return Mono.fromCallable(() -> Product.create(products.nextId(), name, description))
 				.flatMap(products::create);
 	}
 

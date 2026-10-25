@@ -17,6 +17,7 @@ class ArchitectureTest {
 			.applicationServices("..application..")
 			.adapter("web", "..adapters.in.web..")
 			.adapter("persistence", "..adapters.out.mongo..")
+			.adapter("cache", "..adapters.out.redis..")
 			.withOptionalLayers(true);
 
 	@ArchTest
