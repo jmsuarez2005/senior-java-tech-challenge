@@ -8,8 +8,16 @@ services:
     container_name: product-api
     ports:
       - "8080:8080"
-    command: >
-      java -cp app.jar com.mango.App
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/products
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
     deploy:
       resources:
         limits:
@@ -18,6 +26,23 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+
+  mongo:
+    image: mongo:8.0
+    container_name: product-mongo
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
 
   benchmark:
     build:

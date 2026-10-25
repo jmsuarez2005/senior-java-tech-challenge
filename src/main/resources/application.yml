@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: products
+  main:
+    lazy-initialization: true
+    banner-mode: off
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/products}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    root: WARN
+    com.mango.products: INFO
+    # Swagger UI is intentionally public for reviewers; drop springdoc's startup warning.
+    org.springdoc.core.events: ERROR
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+  main:
+    # Eager in tests so wiring errors fail fast instead of on first request.
+    lazy-initialization: false
