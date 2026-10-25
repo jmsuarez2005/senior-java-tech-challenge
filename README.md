@@ -4,7 +4,8 @@ Products with historical prices. A product can have many prices over time, but o
 and currency. Built with Quarkus on Java 21 virtual threads and MongoDB, with an optional Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
-[docs/DECISIONS.md](docs/DECISIONS.md).
+[docs/DECISIONS.md](docs/DECISIONS.md). Why this stack was chosen is explained at the end, in
+[Stack decision](#stack-decision).
 
 ## Running it
 
@@ -204,25 +205,6 @@ Promotions, customer-specific price lists or "10% off this category" are rules e
 result is materialized into these explicit, non-overlapping periods. The read side then stays a lookup, which is
 what makes it fast, and any rule engine can be added without touching it.
 
-### Quarkus and virtual threads, chosen by measurement
-
-The statement weights startup, response times and resource usage, and the app only gets 1 CPU and 1 GB. Three
-implementations of the same design were load-tested under identical limits (details in
-[perf/RESULTS.md](perf/RESULTS.md)):
-
-| Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
-|---|---|---|---|---|---|
-| Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
-| Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
-| **Quarkus 3, virtual threads** | **~1,790** | **~161 ms** | **~221 ms** | **2.5 s** | **~150 MB** |
-
-- **Virtual threads over a reactive pipeline.** With one CPU, the cost that matters is CPU per request. The
-  imperative code on blocking drivers spent less of it than the reactive operator chains, and it is simpler to read
-  and debug. The Mongo and Redis clients were checked for pinning under load and showed none.
-- **Quarkus over Spring Boot.** Quarkus resolves dependency injection and most framework setup at build time, so
-  less work happens at startup and per request. It started four to five times faster, used half the memory and
-  served about a third more requests with a lower tail latency.
-
 ## Performance
 
 Startup and footprint:
@@ -283,3 +265,53 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
   comparisons between runs hold, the k6 thresholds (`p95 < 50 ms`) are not met there.
 - No authentication.
 - The history is not paginated; a product's prices are returned in one response.
+
+## Stack decision
+
+The statement leaves the stack open and puts performance first: fast startup, quick responses and low resource
+usage, with the app limited to 1 CPU and 1 GB. The stack was therefore settled by measuring, not up front.
+
+### What was chosen and why
+
+| Piece | Choice | Why |
+|---|---|---|
+| Language | Java 21 | Current LTS; virtual threads, records, sealed types and pattern matching keep the code short. |
+| Framework | Quarkus 3 | Build-time dependency injection: fastest startup and lowest memory of the options measured. |
+| Concurrency | Virtual threads | Plain imperative code on blocking drivers, with less CPU per request than a reactive pipeline here. |
+| Database | MongoDB | A product and all its prices are one document: every read is one lookup by `_id`, and the no-overlap rule is one atomic update. |
+| Cache | Redis, optional | Takes reads off MongoDB, which only gets half a CPU; shared, so it stays correct with several app instances. |
+| Load test | k6 | Scripted scenarios, thresholds and a JSON report, in a small container. |
+
+### How it was decided
+
+The infrastructure started at the minimum the statement allows (app, MongoDB and k6) and each change was measured
+on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESULTS.md).
+
+1. **Spring Boot on WebFlux** was the starting point: a non-blocking stack looked like the natural fit for little
+   CPU. The first, smaller run showed MongoDB saturated at its half CPU while the app was mostly idle.
+2. **Redis** was added as an auxiliary container. Throughput went up 43% and p99 dropped 29%, and the app itself
+   became the limit.
+3. **Spring MVC with virtual threads** replaced WebFlux to test whether the reactive machinery paid off. It did
+   not: with the app at its CPU limit, the blocking version served more requests with a lower tail latency.
+4. **Quarkus with virtual threads** kept the same design and only replaced the adapters. It was the best result
+   in every metric:
+
+| Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
+|---|---|---|---|---|---|
+| Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
+| Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
+| **Quarkus 3, virtual threads** | **~1,790** | **~161 ms** | **~221 ms** | **2.5 s** | **~150 MB** |
+
+### Trade-offs accepted
+
+- **Quarkus has a smaller ecosystem than Spring Boot.** Everything this service needs (REST, validation, OpenAPI,
+  health, MongoDB, Redis) is covered by official extensions; the gap would matter for a larger system.
+- **Virtual threads rely on drivers that do not pin.** The Mongo and Redis clients were checked under load with
+  `-Djdk.tracePinnedThreads` and showed no pinning. A new blocking library would need the same check.
+- **MongoDB instead of PostgreSQL.** An exclusion constraint would express the no-overlap rule just as well and
+  more declaratively; MongoDB was preferred for the read path, where a product and its whole history are one lookup.
+- **Redis adds a container and a network hop.** It is optional, off by default and fails open, so the API works
+  the same without it.
+
+The stack can still change cheaply: as described in [Architecture](#architecture), the move to Quarkus only
+touched the adapters and the wiring.
