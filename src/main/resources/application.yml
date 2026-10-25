@@ -4,6 +4,9 @@ spring:
   main:
     lazy-initialization: true
     banner-mode: off
+  threads:
+    virtual:
+      enabled: true
   mongodb:
     uri: ${MONGODB_URI:mongodb://localhost:27017/products}
   data:

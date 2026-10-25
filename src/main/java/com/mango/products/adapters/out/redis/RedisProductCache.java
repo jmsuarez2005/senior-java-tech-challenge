@@ -2,12 +2,13 @@ package com.mango.products.adapters.out.redis;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
-import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
@@ -15,7 +16,6 @@ import com.mango.products.application.port.out.ProductCache;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
-import reactor.core.publisher.Mono;
 import tools.jackson.databind.json.JsonMapper;
 
 @Component
@@ -34,36 +34,37 @@ class RedisProductCache implements ProductCache {
 			return 1
 			""", Long.class);
 
-	private final ReactiveStringRedisTemplate redis;
+	private final StringRedisTemplate redis;
 	private final JsonMapper json;
 	private final String ttlSeconds;
 
-	RedisProductCache(ReactiveStringRedisTemplate redis, JsonMapper json,
-			@Value("${products.cache.ttl:10m}") Duration ttl) {
+	RedisProductCache(StringRedisTemplate redis, JsonMapper json, @Value("${products.cache.ttl:10m}") Duration ttl) {
 		this.redis = redis;
 		this.json = json;
 		this.ttlSeconds = Long.toString(ttl.toSeconds());
 	}
 
 	@Override
-	public Mono<Product> get(ProductId id) {
-		return redis.opsForValue().get(key(id))
-				.flatMap(value -> Mono.fromCallable(() -> json.readValue(value, CachedProduct.class).toDomain()))
-				.onErrorResume(e -> {
-					log.warn("Cache read failed for product {}: {}", id, e.toString());
-					return Mono.empty();
-				});
+	public Optional<Product> get(ProductId id) {
+		try {
+			return Optional.ofNullable(redis.opsForValue().get(key(id)))
+					.map(value -> json.readValue(value, CachedProduct.class).toDomain());
+		}
+		catch (RuntimeException e) {
+			log.warn("Cache read failed for product {}: {}", id, e.toString());
+			return Optional.empty();
+		}
 	}
 
 	@Override
-	public Mono<Void> put(Product product) {
-		return Mono.fromCallable(() -> json.writeValueAsString(CachedProduct.from(product)))
-				.flatMap(value -> redis.execute(PUT_IF_NEWER, List.of(key(product.id())),
-						List.of(value, Long.toString(product.version()), ttlSeconds)).then())
-				.onErrorResume(e -> {
-					log.warn("Cache write failed for product {}: {}", product.id(), e.toString());
-					return Mono.empty();
-				});
+	public void put(Product product) {
+		try {
+			String value = json.writeValueAsString(CachedProduct.from(product));
+			redis.execute(PUT_IF_NEWER, List.of(key(product.id())), value, Long.toString(product.version()), ttlSeconds);
+		}
+		catch (RuntimeException e) {
+			log.warn("Cache write failed for product {}: {}", product.id(), e.toString());
+		}
 	}
 
 	private static String key(ProductId id) {

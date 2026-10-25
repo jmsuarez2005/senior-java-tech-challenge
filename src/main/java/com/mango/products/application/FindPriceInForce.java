@@ -9,8 +9,6 @@ import com.mango.products.domain.Price;
 import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.ProductId;
 
-import reactor.core.publisher.Mono;
-
 @Service
 public class FindPriceInForce {
 
@@ -20,10 +18,9 @@ public class FindPriceInForce {
 		this.findProduct = findProduct;
 	}
 
-	public Mono<Price> execute(ProductId productId, LocalDate date, Currency currency) {
-		return findProduct.execute(productId)
-				.flatMap(product -> Mono.justOrEmpty(product.priceAt(date, currency)))
-				.switchIfEmpty(Mono.error(() -> new PriceNotFoundException(productId, date, currency)));
+	public Price execute(ProductId productId, LocalDate date, Currency currency) {
+		return findProduct.execute(productId).priceAt(date, currency)
+				.orElseThrow(() -> new PriceNotFoundException(productId, date, currency));
 	}
 
 }

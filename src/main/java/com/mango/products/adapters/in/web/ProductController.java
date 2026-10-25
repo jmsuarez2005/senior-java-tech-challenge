@@ -28,6 +28,7 @@ import com.mango.products.application.AddPrice;
 import com.mango.products.application.CreateProduct;
 import com.mango.products.application.FindPriceInForce;
 import com.mango.products.application.FindProduct;
+import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,7 +36,6 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("/products")
@@ -59,17 +59,16 @@ class ProductController {
 	@Operation(summary = "Create a product")
 	@ApiResponse(responseCode = "201", description = "Created; Location points to the new product")
 	@ApiResponse(responseCode = "400", description = "Invalid name or description")
-	Mono<ResponseEntity<ProductResponse>> create(@Valid @RequestBody CreateProductRequest request) {
-		return createProduct.execute(request.name(), request.description())
-				.map(product -> ResponseEntity.created(URI.create("/products/" + product.id()))
-						.body(ProductResponse.from(product)));
+	ResponseEntity<ProductResponse> create(@Valid @RequestBody CreateProductRequest request) {
+		Product product = createProduct.execute(request.name(), request.description());
+		return ResponseEntity.created(URI.create("/products/" + product.id())).body(ProductResponse.from(product));
 	}
 
 	@GetMapping("/{id}")
 	@Operation(summary = "Get a product")
 	@ApiResponse(responseCode = "404", description = "Unknown product")
-	Mono<ProductResponse> get(@PathVariable String id) {
-		return findProduct.execute(new ProductId(id)).map(ProductResponse::from);
+	ProductResponse get(@PathVariable String id) {
+		return ProductResponse.from(findProduct.execute(new ProductId(id)));
 	}
 
 	@PostMapping("/{id}/prices")
@@ -80,26 +79,24 @@ class ProductController {
 	@ApiResponse(responseCode = "400", description = "Invalid value or dates")
 	@ApiResponse(responseCode = "404", description = "Unknown product")
 	@ApiResponse(responseCode = "409", description = "Overlaps an existing price in the same currency")
-	Mono<PriceResponse> addPrice(@PathVariable String id, @Valid @RequestBody AddPriceRequest request) {
-		return Mono.fromCallable(request::toPrice)
-				.flatMap(price -> addPrice.execute(new ProductId(id), price))
-				.map(PriceResponse::from);
+	PriceResponse addPrice(@PathVariable String id, @Valid @RequestBody AddPriceRequest request) {
+		return PriceResponse.from(addPrice.execute(new ProductId(id), request.toPrice()));
 	}
 
 	@GetMapping(path = "/{id}/prices", params = "date")
 	@Operation(summary = "Get the price in force on a date",
 			description = "Kept for compatibility; GET /products/{id}/price is the preferred form.")
 	@ApiResponse(responseCode = "404", description = "Unknown product or no price on that date")
-	Mono<PriceValueResponse> priceOn(@PathVariable String id,
+	PriceValueResponse priceOn(@PathVariable String id,
 			@RequestParam @DateTimeFormat(iso = ISO.DATE) LocalDate date,
 			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = ApiDefaults.CURRENCY_CODE) Currency currency) {
-		return findPriceInForce.execute(new ProductId(id), date, currency).map(PriceValueResponse::from);
+		return PriceValueResponse.from(findPriceInForce.execute(new ProductId(id), date, currency));
 	}
 
 	@GetMapping("/{id}/price")
 	@Operation(summary = "Get the price in force on a date")
 	@ApiResponse(responseCode = "404", description = "Unknown product or no price on that date")
-	Mono<PriceValueResponse> price(@PathVariable String id,
+	PriceValueResponse price(@PathVariable String id,
 			@RequestParam @DateTimeFormat(iso = ISO.DATE) LocalDate date,
 			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = ApiDefaults.CURRENCY_CODE) Currency currency) {
 		return priceOn(id, date, currency);
@@ -108,9 +105,9 @@ class ProductController {
 	@GetMapping(path = "/{id}/prices", params = "!date")
 	@Operation(summary = "Get the price history", description = "Prices in one currency, ordered by initDate.")
 	@ApiResponse(responseCode = "404", description = "Unknown product")
-	Mono<PriceHistoryResponse> history(@PathVariable String id,
+	PriceHistoryResponse history(@PathVariable String id,
 			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = ApiDefaults.CURRENCY_CODE) Currency currency) {
-		return findProduct.execute(new ProductId(id)).map(product -> PriceHistoryResponse.from(product, currency));
+		return PriceHistoryResponse.from(findProduct.execute(new ProductId(id)), currency);
 	}
 
 }

@@ -7,19 +7,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.bind.support.WebExchangeBindException;
-import org.springframework.web.reactive.result.method.annotation.ResponseEntityExceptionHandler;
-import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import com.mango.products.domain.DomainException;
 import com.mango.products.domain.DomainValidationException;
 import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.PriceOverlapException;
 import com.mango.products.domain.ProductNotFoundException;
-
-import reactor.core.publisher.Mono;
 
 @RestControllerAdvice
 class ApiExceptionHandler extends ResponseEntityExceptionHandler {
@@ -40,12 +38,12 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	}
 
 	@Override
-	protected Mono<ResponseEntity<Object>> handleWebExchangeBindException(WebExchangeBindException exception,
-			HttpHeaders headers, HttpStatusCode status, ServerWebExchange exchange) {
+	protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException exception,
+			HttpHeaders headers, HttpStatusCode status, WebRequest request) {
 		List<FieldViolation> violations = exception.getFieldErrors().stream()
 				.map(error -> new FieldViolation(error.getField(), error.getDefaultMessage()))
 				.toList();
-		return handleExceptionInternal(exception, validationProblem(violations), headers, status, exchange);
+		return handleExceptionInternal(exception, validationProblem(violations), headers, status, request);
 	}
 
 	private static ProblemDetail validationProblem(List<FieldViolation> violations) {

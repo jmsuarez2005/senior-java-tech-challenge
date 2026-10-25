@@ -2,56 +2,37 @@ package com.mango.products.adapters.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.Duration;
 import java.util.Map;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.reactive.server.WebTestClient;
-import org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec;
+import org.springframework.test.json.JsonCompareMode;
+import org.springframework.test.web.servlet.client.RestTestClient;
+import org.springframework.test.web.servlet.client.RestTestClient.ResponseSpec;
 
 import com.mango.products.MongoTestcontainersConfiguration;
 import com.mango.products.RedisTestcontainersConfiguration;
-import com.mango.products.ThirdPartyBlockingAllowList;
-
-import reactor.blockhound.BlockHound;
-import reactor.blockhound.BlockingOperationError;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureWebTestClient
+@AutoConfigureRestTestClient
 @ActiveProfiles("test")
 @Import({ MongoTestcontainersConfiguration.class, RedisTestcontainersConfiguration.class })
 class ProductApiIT {
 
 	@Autowired
-	WebTestClient client;
-
-	@BeforeAll
-	static void installBlockHound() {
-		BlockHound.install(new ThirdPartyBlockingAllowList());
-	}
-
-	@Test
-	void blockHoundIsActive() {
-		Mono<Long> blocking = Mono.delay(Duration.ofMillis(1)).doOnNext(tick -> sleep());
-
-		StepVerifier.create(blocking).expectError(BlockingOperationError.class).verify();
-	}
+	RestTestClient client;
 
 	@Test
 	void createsProduct() {
 		client.post().uri("/products")
-				.bodyValue(Map.of("name", "Zapatillas deportivas", "description", "Modelo 2025 edición limitada"))
+				.body(Map.of("name", "Zapatillas deportivas", "description", "Modelo 2025 edición limitada"))
 				.exchange()
 				.expectStatus().isCreated()
 				.expectHeader().value("Location", location -> assertThat(location).matches("/products/[0-9a-f]{24}"))
@@ -91,7 +72,7 @@ class ProductApiIT {
 
 		client.get().uri("/products/{id}/prices?date={date}", id, date).exchange()
 				.expectStatus().isOk()
-				.expectBody().json("{\"value\": " + expected + "}", true);
+				.expectBody().json("{\"value\": " + expected + "}", JsonCompareMode.STRICT);
 	}
 
 	@Test
@@ -100,7 +81,7 @@ class ProductApiIT {
 
 		client.get().uri("/products/{id}/price?date=2024-04-15", id).exchange()
 				.expectStatus().isOk()
-				.expectBody().json("{\"value\": 99.99}", true);
+				.expectBody().json("{\"value\": 99.99}", JsonCompareMode.STRICT);
 	}
 
 	@Test
@@ -127,7 +108,7 @@ class ProductApiIT {
 						    { "value": 199.99, "initDate": "2025-01-01", "endDate": "2025-06-30" }
 						  ]
 						}
-						""", true);
+						""", JsonCompareMode.STRICT);
 	}
 
 	@Test
@@ -196,7 +177,7 @@ class ProductApiIT {
 
 		ResponseSpec response = client.post().uri("/products/{id}/prices", id)
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(body)
+				.body(body)
 				.exchange();
 
 		expectProblem(response, 400).jsonPath("$.errors[0].field").isEqualTo(field);
@@ -225,7 +206,7 @@ class ProductApiIT {
 
 	@Test
 	void rejectsProductWithoutName() {
-		ResponseSpec response = client.post().uri("/products").bodyValue(Map.of("name", " ")).exchange();
+		ResponseSpec response = client.post().uri("/products").body(Map.of("name", " ")).exchange();
 
 		expectProblem(response, 400).jsonPath("$.errors[0].field").isEqualTo("name");
 	}
@@ -242,7 +223,7 @@ class ProductApiIT {
 
 	private String createProduct() {
 		return client.post().uri("/products")
-				.bodyValue(Map.of("name", "Zapatillas deportivas", "description", "Modelo 2025 edición limitada"))
+				.body(Map.of("name", "Zapatillas deportivas", "description", "Modelo 2025 edición limitada"))
 				.exchange()
 				.expectStatus().isCreated()
 				.expectBody(Map.class)
@@ -260,22 +241,13 @@ class ProductApiIT {
 	}
 
 	private ResponseSpec addPrice(String id, Map<String, ?> body) {
-		return client.post().uri("/products/{id}/prices", id).bodyValue(body).exchange();
+		return client.post().uri("/products/{id}/prices", id).body(body).exchange();
 	}
 
-	private static WebTestClient.BodyContentSpec expectProblem(ResponseSpec response, int status) {
+	private static RestTestClient.BodyContentSpec expectProblem(ResponseSpec response, int status) {
 		return response.expectStatus().isEqualTo(status)
 				.expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
 				.expectBody().jsonPath("$.status").isEqualTo(status);
-	}
-
-	private static void sleep() {
-		try {
-			Thread.sleep(10);
-		}
-		catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-		}
 	}
 
 }

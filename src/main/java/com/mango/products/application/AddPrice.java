@@ -7,8 +7,6 @@ import com.mango.products.application.port.out.ProductRepository;
 import com.mango.products.domain.Price;
 import com.mango.products.domain.ProductId;
 
-import reactor.core.publisher.Mono;
-
 @Service
 public class AddPrice {
 
@@ -20,10 +18,9 @@ public class AddPrice {
 		this.cache = cache;
 	}
 
-	public Mono<Price> execute(ProductId productId, Price price) {
-		return products.addPriceIfNoOverlap(productId, price)
-				.flatMap(cache::put)
-				.thenReturn(price);
+	public Price execute(ProductId productId, Price price) {
+		cache.put(products.addPriceIfNoOverlap(productId, price));
+		return price;
 	}
 
 }
