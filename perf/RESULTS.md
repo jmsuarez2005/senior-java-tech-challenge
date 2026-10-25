@@ -32,7 +32,7 @@ App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarku
 
 - **Spring to Quarkus, same virtual-thread design** (branch `experiment/quarkus`): only the adapters and the wiring
   change; the domain is untouched and the use cases only swap `@Service` for `@ApplicationScoped`. Without cache:
-  throughput +37%, p95 -29%, p99 -42%. With Redis: throughput +34%, p95 -23%, p99 -27%. Startup drops from
+  throughput +35%, p95 -29%, p99 -42%. With Redis: throughput +35%, p95 -23%, p99 -27%. Startup drops from
   8 to 12 s to about 2.5 s and memory roughly halves.
 - **Run 6, a pool that was too small:** the Quarkus Redis client defaults to 6 connections and 24 waiters. Under 200
   concurrent requests the queue overflowed, the cache failed open on most reads and every request paid for Redis and
