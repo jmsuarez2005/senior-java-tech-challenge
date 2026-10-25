@@ -19,8 +19,12 @@ Container limits are the ones in the statement: app and k6 at 1 CPU / 1 GB, Mong
 | 6 | Quarkus + virtual threads + blocking drivers | Redis, default pool | 919 | 109 ms | 443 ms | 665 ms | 0% | 2.7 s |
 | 6b | Quarkus + virtual threads + blocking drivers | Redis, pool of 32 | 1,813 | 71 ms | 159 ms | 224 ms | 0% | 2.4 s |
 | 6c | Quarkus + virtual threads + blocking drivers (repeat) | Redis, pool of 32 | 1,765 | 73 ms | 163 ms | 218 ms | 0% | |
+| 7 | Quarkus reactive (Mutiny, Vert.x event loop, reactive drivers) | none | 1,580 | 88 ms | 196 ms | 254 ms | 0% | 2.6 s |
+| 7b | Quarkus reactive (repeat) | none | 1,532 | 90 ms | 192 ms | 240 ms | 0% | |
+| 8 | Quarkus reactive | Redis, pool of 32 | 1,939 | 67 ms | 150 ms | 195 ms | 0% | 2.3 s |
+| 8b | Quarkus reactive (repeat) | Redis, pool of 32 | 2,029 | 65 ms | 146 ms | 201 ms | 0% | |
 
-App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarkus.
+App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarkus (both models).
 
 ## What changed between runs
 
@@ -34,6 +38,11 @@ App memory under load: 260 to 270 MB with Spring Boot, 135 to 155 MB with Quarku
   change; the domain is untouched and the use cases only swap `@Service` for `@ApplicationScoped`. Without cache:
   throughput +35%, p95 -29%, p99 -42%. With Redis: throughput +35%, p95 -23%, p99 -27%. Startup drops from
   8 to 12 s to about 2.5 s and memory roughly halves.
+- **Quarkus virtual threads to Quarkus reactive** (branch `experiment/quarkus-reactive`): ports and use cases return
+  Mutiny `Uni`, endpoints run on the Vert.x event loop, MongoDB and Redis use their reactive clients; the domain is
+  untouched. Without cache the difference is within noise (throughput +6%, p95 -3%, p99 -6%). With Redis it is
+  consistent across repeats: throughput +11%, p95 -8%, p99 -10%, and the app container had more CPU left
+  (about 67% against 80%). No event-loop blocking warnings in any run.
 - **Run 6, a pool that was too small:** the Quarkus Redis client defaults to 6 connections and 24 waiters. Under 200
   concurrent requests the queue overflowed, the cache failed open on most reads and every request paid for Redis and
   MongoDB. Sizing the pool to 32 connections (run 6b) removed every cache failure.
