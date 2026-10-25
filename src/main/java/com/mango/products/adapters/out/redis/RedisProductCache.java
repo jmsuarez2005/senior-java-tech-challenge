@@ -2,7 +2,9 @@ package com.mango.products.adapters.out.redis;
 
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 
+import org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException;
 import org.jboss.logging.Logger;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -13,7 +15,9 @@ import com.mango.products.domain.ProductId;
 
 import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import io.quarkus.redis.datasource.value.ReactiveValueCommands;
+import io.smallrye.faulttolerance.api.Guard;
 import io.smallrye.mutiny.Uni;
+import jakarta.enterprise.util.TypeLiteral;
 
 public class RedisProductCache implements ProductCache {
 
@@ -29,10 +33,26 @@ public class RedisProductCache implements ProductCache {
 			return 1
 			""";
 
+	private static final TypeLiteral<Uni<String>> UNI_STRING = new TypeLiteral<>() {
+	};
+	private static final TypeLiteral<Uni<Void>> UNI_VOID = new TypeLiteral<>() {
+	};
+
 	private final ReactiveRedisDataSource redis;
 	private final ReactiveValueCommands<String, String> values;
 	private final ObjectMapper json;
 	private final String ttlSeconds;
+
+	// One breaker for every Redis call: when Redis is slow or down, requests skip it instead of each paying the timeout.
+	private final Guard redisCircuit = Guard.create()
+			.withDescription("redis-product-cache")
+			.withCircuitBreaker()
+				.requestVolumeThreshold(20)
+				.failureRatio(0.5)
+				.delay(5, ChronoUnit.SECONDS)
+				.onStateChange(state -> log.warnf("Redis cache circuit is now %s", state))
+				.done()
+			.build();
 
 	public RedisProductCache(ReactiveRedisDataSource redis, ObjectMapper json, Duration ttl) {
 		this.redis = redis;
@@ -43,24 +63,38 @@ public class RedisProductCache implements ProductCache {
 
 	@Override
 	public Uni<Product> get(ProductId id) {
-		return values.get(key(id))
+		return redisCircuit.get(() -> values.get(key(id)), UNI_STRING)
 				.onItem().ifNotNull().transform(value -> read(value).toDomain())
 				.onFailure().recoverWithItem(e -> {
-					log.warnf("Cache read failed for product %s: %s", id, e);
+					logFailure("read", id, e);
 					return null;
 				});
 	}
 
+	// If the new version cannot be stored, the old one is deleted: a stale price must never outlive a write.
 	@Override
 	public Uni<Void> put(Product product) {
-		return Uni.createFrom().item(() -> write(CachedProduct.from(product)))
-				.chain(value -> redis.execute("EVAL", PUT_IF_NEWER, "1", key(product.id()), value,
-						Long.toString(product.version()), ttlSeconds))
-				.replaceWithVoid()
+		return redisCircuit.get(() -> Uni.createFrom().item(() -> write(CachedProduct.from(product)))
+						.chain(value -> redis.execute("EVAL", PUT_IF_NEWER, "1", key(product.id()), value,
+								Long.toString(product.version()), ttlSeconds))
+						.replaceWithVoid(), UNI_VOID)
+				.onFailure().call(e -> evict(product.id()))
 				.onFailure().recoverWithItem(e -> {
-					log.warnf("Cache write failed for product %s: %s", product.id(), e);
+					logFailure("write", product.id(), e);
 					return null;
 				});
+	}
+
+	private Uni<Void> evict(ProductId id) {
+		return redisCircuit.get(() -> redis.key(String.class).del(key(id)).replaceWithVoid(), UNI_VOID)
+				.onFailure().recoverWithNull();
+	}
+
+	// While the circuit is open every call fails fast; the state change is logged once instead of one line per request.
+	private static void logFailure(String operation, ProductId id, Throwable e) {
+		if (!(e instanceof CircuitBreakerOpenException)) {
+			log.warnf("Cache %s failed for product %s: %s", operation, id, e);
+		}
 	}
 
 	private CachedProduct read(String value) {

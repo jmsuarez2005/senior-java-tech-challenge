@@ -77,6 +77,17 @@ class RedisProductCacheIT {
 		assertThat(get(v2.id())).isEqualTo(v2);
 	}
 
+	@Test
+	void aFailedWriteRemovesTheEntryInsteadOfLeavingAStaleOne() {
+		Product product = product("p-unwritable", 3, price("99.99", "2024-01-01", null));
+		redis.value(String.class).set("product:p-unwritable", "not json").await().atMost(Duration.ofSeconds(5));
+
+		put(product);
+
+		assertThat(redis.key(String.class).exists("product:p-unwritable").await().atMost(Duration.ofSeconds(5))).isFalse();
+		assertThat(get(product.id())).isNull();
+	}
+
 	private Product get(ProductId id) {
 		return cache.get(id).await().atMost(Duration.ofSeconds(5));
 	}

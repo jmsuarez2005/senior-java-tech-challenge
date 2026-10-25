@@ -11,13 +11,12 @@ services:
     environment:
       MONGODB_URI: mongodb://mongo:27017/products
       REDIS_URL: redis://redis:6379
-      PRODUCTS_CACHE_ENABLED: ${PRODUCTS_CACHE_ENABLED:-false}
+      PRODUCTS_CACHE_ENABLED: ${PRODUCTS_CACHE_ENABLED:-true}
     depends_on:
       mongo:
         condition: service_healthy
       redis:
         condition: service_healthy
-        required: false
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
       interval: 2s
@@ -51,7 +50,6 @@ services:
 
   redis:
     image: redis:8.10-alpine
-    profiles: ["cache"]
     container_name: product-redis
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
