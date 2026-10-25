@@ -5,6 +5,7 @@ import java.time.Duration;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mango.products.adapters.out.nearcache.NearProductCache;
 import com.mango.products.adapters.out.nocache.DisabledProductCache;
 import com.mango.products.adapters.out.redis.RedisProductCache;
 import com.mango.products.application.port.out.ProductCache;
@@ -21,8 +22,14 @@ class CacheConfiguration {
 	@Produces
 	@ApplicationScoped
 	ProductCache productCache(@ConfigProperty(name = "products.cache.enabled") boolean enabled,
-			@ConfigProperty(name = "products.cache.ttl") Duration ttl, Instance<ReactiveRedisDataSource> redis, ObjectMapper json) {
-		return enabled ? new RedisProductCache(redis.get(), json, ttl) : new DisabledProductCache();
+			@ConfigProperty(name = "products.cache.ttl") Duration ttl,
+			@ConfigProperty(name = "products.cache.local-ttl") Duration localTtl,
+			@ConfigProperty(name = "products.cache.local-max-entries") long localMaxEntries,
+			Instance<ReactiveRedisDataSource> redis, ObjectMapper json) {
+		if (!enabled) {
+			return new DisabledProductCache();
+		}
+		return new NearProductCache(new RedisProductCache(redis.get(), json, ttl), localTtl, localMaxEntries);
 	}
 
 }
