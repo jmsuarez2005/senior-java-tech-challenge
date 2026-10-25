@@ -1,20 +1,20 @@
 # Products API
 
 Products with historical prices. A product can have many prices over time, but only one price in force per day
-and currency. Built with Spring Boot 4 on WebFlux, reactive MongoDB and a Redis cache.
+and currency. Built with Spring Boot 4 on WebFlux and reactive MongoDB, with an optional Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Running it
 
-Everything (API, MongoDB, Redis and the k6 load test) with one command:
+Everything (API, MongoDB and the k6 load test) with one command:
 
 ```bash
 docker compose up --build
 ```
 
-Only the API with MongoDB and Redis:
+Only the API and MongoDB:
 
 ```bash
 docker compose up --build app
@@ -24,7 +24,7 @@ Redis is optional and off by default; see [Load test](#load-test) to switch it o
 
 The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui.html` and health at `/actuator/health`.
 
-For local development, start MongoDB and Redis in Docker and run the app with the Gradle wrapper (Java 21):
+For local development, start MongoDB (and Redis, if you enable the cache) and run the app with the Gradle wrapper (Java 21):
 
 ```bash
 docker compose up -d mongo redis
