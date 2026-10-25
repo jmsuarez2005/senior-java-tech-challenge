@@ -1,26 +1,25 @@
 package com.mango.products.application.port.out;
 
-import java.util.Optional;
-
 import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
+
+import io.smallrye.mutiny.Uni;
 
 public interface ProductRepository {
 
 	ProductId nextId();
 
-	Product create(Product product);
+	Uni<Product> create(Product product);
 
-	Optional<Product> findById(ProductId id);
+	/** Emits {@code null} when the product does not exist. */
+	Uni<Product> findById(ProductId id);
 
 	/**
 	 * Adds the price in a single atomic write, only if no price of the same currency overlaps it,
-	 * and returns the product as stored after the write.
-	 *
-	 * @throws com.mango.products.domain.PriceOverlapException if a price of the same currency overlaps it
-	 * @throws com.mango.products.domain.ProductNotFoundException if the product does not exist
+	 * and emits the product as stored after the write.
+	 * Fails with {@code PriceOverlapException} or {@code ProductNotFoundException}.
 	 */
-	Product addPriceIfNoOverlap(ProductId id, Price price);
+	Uni<Product> addPriceIfNoOverlap(ProductId id, Price price);
 
 }

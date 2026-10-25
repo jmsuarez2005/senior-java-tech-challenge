@@ -16,8 +16,6 @@ import static com.mongodb.client.model.Updates.combine;
 import static com.mongodb.client.model.Updates.inc;
 import static com.mongodb.client.model.Updates.push;
 
-import java.util.Optional;
-
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import org.bson.types.ObjectId;
@@ -29,11 +27,12 @@ import com.mango.products.domain.PriceOverlapException;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.FindOneAndUpdateOptions;
 import com.mongodb.client.model.ReturnDocument;
 
+import io.quarkus.mongodb.reactive.ReactiveMongoClient;
+import io.quarkus.mongodb.reactive.ReactiveMongoCollection;
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -42,9 +41,9 @@ class MongoProductRepository implements ProductRepository {
 	private static final FindOneAndUpdateOptions RETURN_UPDATED = new FindOneAndUpdateOptions()
 			.returnDocument(ReturnDocument.AFTER);
 
-	private final MongoCollection<Document> products;
+	private final ReactiveMongoCollection<Document> products;
 
-	MongoProductRepository(MongoClient mongo, @ConfigProperty(name = "quarkus.mongodb.database") String database) {
+	MongoProductRepository(ReactiveMongoClient mongo, @ConfigProperty(name = "quarkus.mongodb.database") String database) {
 		this.products = mongo.getDatabase(database).getCollection("products");
 	}
 
@@ -54,36 +53,37 @@ class MongoProductRepository implements ProductRepository {
 	}
 
 	@Override
-	public Product create(Product product) {
-		products.insertOne(ProductDocumentMapper.toDocument(product));
-		return product;
+	public Uni<Product> create(Product product) {
+		return products.insertOne(ProductDocumentMapper.toDocument(product)).replaceWith(product);
 	}
 
 	@Override
-	public Optional<Product> findById(ProductId id) {
+	public Uni<Product> findById(ProductId id) {
 		if (!ObjectId.isValid(id.value())) {
-			return Optional.empty();
+			return Uni.createFrom().nullItem();
 		}
-		return Optional.ofNullable(products.find(byId(id)).first()).map(ProductDocumentMapper::toDomain);
+		return products.find(byId(id)).collect().first()
+				.onItem().ifNotNull().transform(ProductDocumentMapper::toDomain);
 	}
 
 	@Override
-	public Product addPriceIfNoOverlap(ProductId id, Price price) {
+	public Uni<Product> addPriceIfNoOverlap(ProductId id, Price price) {
 		if (!ObjectId.isValid(id.value())) {
-			throw new ProductNotFoundException(id);
+			return Uni.createFrom().failure(new ProductNotFoundException(id));
 		}
 		Document newPrice = ProductDocumentMapper.toDocument(price);
 		Bson withoutOverlap = and(byId(id), not(elemMatch(PRICES, overlapping(newPrice))));
 		Bson addAndBumpVersion = combine(push(PRICES, newPrice), inc(VERSION, 1L));
 
-		Document stored = products.findOneAndUpdate(withoutOverlap, addAndBumpVersion, RETURN_UPDATED);
-		if (stored != null) {
-			return ProductDocumentMapper.toDomain(stored);
-		}
-		if (products.countDocuments(byId(id)) > 0) {
-			throw new PriceOverlapException(id, price);
-		}
-		throw new ProductNotFoundException(id);
+		return products.findOneAndUpdate(withoutOverlap, addAndBumpVersion, RETURN_UPDATED)
+				.onItem().ifNotNull().transform(ProductDocumentMapper::toDomain)
+				.onItem().ifNull().switchTo(() -> explainRejection(id, price));
+	}
+
+	private Uni<Product> explainRejection(ProductId id, Price price) {
+		return products.countDocuments(byId(id))
+				.chain(count -> Uni.createFrom().<Product>failure(
+						count > 0 ? new PriceOverlapException(id, price) : new ProductNotFoundException(id)));
 	}
 
 	// Closed intervals [a, b] and [c, d] overlap when a <= d and c <= b.

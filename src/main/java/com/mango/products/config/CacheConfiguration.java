@@ -9,7 +9,7 @@ import com.mango.products.adapters.out.nocache.DisabledProductCache;
 import com.mango.products.adapters.out.redis.RedisProductCache;
 import com.mango.products.application.port.out.ProductCache;
 
-import io.quarkus.redis.datasource.RedisDataSource;
+import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
@@ -21,7 +21,7 @@ class CacheConfiguration {
 	@Produces
 	@ApplicationScoped
 	ProductCache productCache(@ConfigProperty(name = "products.cache.enabled") boolean enabled,
-			@ConfigProperty(name = "products.cache.ttl") Duration ttl, Instance<RedisDataSource> redis, ObjectMapper json) {
+			@ConfigProperty(name = "products.cache.ttl") Duration ttl, Instance<ReactiveRedisDataSource> redis, ObjectMapper json) {
 		return enabled ? new RedisProductCache(redis.get(), json, ttl) : new DisabledProductCache();
 	}
 

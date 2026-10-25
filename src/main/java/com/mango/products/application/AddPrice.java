@@ -5,6 +5,7 @@ import com.mango.products.application.port.out.ProductRepository;
 import com.mango.products.domain.Price;
 import com.mango.products.domain.ProductId;
 
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -18,9 +19,10 @@ public class AddPrice {
 		this.cache = cache;
 	}
 
-	public Price execute(ProductId productId, Price price) {
-		cache.put(products.addPriceIfNoOverlap(productId, price));
-		return price;
+	public Uni<Price> execute(ProductId productId, Price price) {
+		return products.addPriceIfNoOverlap(productId, price)
+				.call(cache::put)
+				.replaceWith(price);
 	}
 
 }

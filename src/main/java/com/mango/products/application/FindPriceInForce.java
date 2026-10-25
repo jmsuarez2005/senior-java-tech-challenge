@@ -7,6 +7,7 @@ import com.mango.products.domain.Price;
 import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.ProductId;
 
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -18,9 +19,10 @@ public class FindPriceInForce {
 		this.findProduct = findProduct;
 	}
 
-	public Price execute(ProductId productId, LocalDate date, Currency currency) {
-		return findProduct.execute(productId).priceAt(date, currency)
-				.orElseThrow(() -> new PriceNotFoundException(productId, date, currency));
+	public Uni<Price> execute(ProductId productId, LocalDate date, Currency currency) {
+		return findProduct.execute(productId)
+				.map(product -> product.priceAt(date, currency).orElse(null))
+				.onItem().ifNull().failWith(() -> new PriceNotFoundException(productId, date, currency));
 	}
 
 }
