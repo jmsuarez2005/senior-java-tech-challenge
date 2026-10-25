@@ -4,17 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.Currency;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
+
 import com.mango.products.domain.DateRange;
 import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
@@ -24,6 +21,7 @@ import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
 
 import io.quarkus.test.junit.QuarkusTest;
+import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 
 @QuarkusTest
@@ -31,20 +29,21 @@ class MongoProductRepositoryIT {
 
 	private static final Currency EUR = Currency.getInstance("EUR");
 	private static final Currency USD = Currency.getInstance("USD");
+	private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
 	@Inject
 	MongoProductRepository repository;
 
 	@Test
 	void createdProductCanBeFoundById() {
-		Product product = repository.create(newProduct());
+		Product product = await(repository.create(newProduct()));
 
-		assertThat(repository.findById(product.id())).contains(product);
+		assertThat(await(repository.findById(product.id()))).isEqualTo(product);
 	}
 
 	@Test
-	void findByIdOfUnknownProductIsEmpty() {
-		assertThat(repository.findById(repository.nextId())).isEmpty();
+	void findByIdOfUnknownProductIsNull() {
+		assertThat(await(repository.findById(repository.nextId()))).isNull();
 	}
 
 	@Test
@@ -53,11 +52,10 @@ class MongoProductRepositoryIT {
 		Price later = price("199.99", EUR, "2025-01-01", "2025-06-30");
 		Price earlier = price("99.99", EUR, "2024-01-01", "2024-06-30");
 
-		repository.addPriceIfNoOverlap(id, later);
-		repository.addPriceIfNoOverlap(id, earlier);
+		await(repository.addPriceIfNoOverlap(id, later));
+		await(repository.addPriceIfNoOverlap(id, earlier));
 
-		assertThat(repository.findById(id)).hasValueSatisfying(
-				product -> assertThat(product.prices()).containsExactly(earlier, later));
+		assertThat(await(repository.findById(id)).prices()).containsExactly(earlier, later);
 	}
 
 	@Test
@@ -65,7 +63,7 @@ class MongoProductRepositoryIT {
 		ProductId id = createProduct();
 		Price price = price("99.99", EUR, "2024-01-01", null);
 
-		Product stored = repository.addPriceIfNoOverlap(id, price);
+		Product stored = await(repository.addPriceIfNoOverlap(id, price));
 
 		assertThat(stored.prices()).containsExactly(price);
 		assertThat(stored.version()).isEqualTo(1);
@@ -74,71 +72,55 @@ class MongoProductRepositoryIT {
 	@Test
 	void rejectsPriceOverlappingByASingleDay() {
 		ProductId id = createProduct();
-		repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30"));
+		await(repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30")));
 
-		assertThatThrownBy(() -> repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-06-30", "2024-12-31")))
+		assertThatThrownBy(() -> await(repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-06-30", "2024-12-31"))))
 				.isInstanceOf(PriceOverlapException.class);
 	}
 
 	@Test
 	void acceptsAdjacentPriceAndSamePeriodInAnotherCurrency() {
 		ProductId id = createProduct();
-		repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30"));
+		await(repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30")));
 
-		repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-07-01", null));
-		Product stored = repository.addPriceIfNoOverlap(id, price("109.99", USD, "2024-01-01", "2024-06-30"));
+		await(repository.addPriceIfNoOverlap(id, price("89.99", EUR, "2024-07-01", null)));
+		Product stored = await(repository.addPriceIfNoOverlap(id, price("109.99", USD, "2024-01-01", "2024-06-30")));
 
 		assertThat(stored.prices()).hasSize(3);
 	}
 
 	@Test
 	void addingPriceToUnknownProductFails() {
-		assertThatThrownBy(() -> repository.addPriceIfNoOverlap(repository.nextId(), price("99.99", EUR, "2024-01-01", null)))
+		assertThatThrownBy(() -> await(repository.addPriceIfNoOverlap(repository.nextId(), price("99.99", EUR, "2024-01-01", null))))
 				.isInstanceOf(ProductNotFoundException.class);
 	}
 
 	@Test
-	void concurrentOverlappingInsertsLetExactlyOneThrough() throws InterruptedException {
+	void concurrentOverlappingInsertsLetExactlyOneThrough() {
 		ProductId id = createProduct();
 		int attempts = 50;
-		List<Callable<Boolean>> inserts = IntStream.rangeClosed(1, attempts)
-				.<Callable<Boolean>>mapToObj(i -> () -> tryInsert(id, price(i + ".00", EUR, "2024-01-01", "2024-12-31")))
+		List<Uni<Boolean>> inserts = IntStream.rangeClosed(1, attempts)
+				.mapToObj(i -> repository.addPriceIfNoOverlap(id, price(i + ".00", EUR, "2024-01-01", "2024-12-31"))
+						.replaceWith(true)
+						.onFailure(PriceOverlapException.class).recoverWithItem(false))
 				.toList();
 
-		List<Boolean> results;
-		try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-			results = executor.invokeAll(inserts).stream().map(MongoProductRepositoryIT::resultOf).toList();
-		}
+		List<Boolean> results = await(Uni.join().all(inserts).andFailFast());
 
 		assertThat(results).hasSize(attempts).filteredOn(Boolean::booleanValue).hasSize(1);
-		assertThat(repository.findById(id)).hasValueSatisfying(product -> assertThat(product.prices()).hasSize(1));
-	}
-
-	private boolean tryInsert(ProductId id, Price price) {
-		try {
-			repository.addPriceIfNoOverlap(id, price);
-			return true;
-		}
-		catch (PriceOverlapException e) {
-			return false;
-		}
-	}
-
-	private static Boolean resultOf(Future<Boolean> future) {
-		try {
-			return future.get();
-		}
-		catch (InterruptedException | ExecutionException e) {
-			throw new IllegalStateException(e);
-		}
+		assertThat(await(repository.findById(id)).prices()).hasSize(1);
 	}
 
 	private ProductId createProduct() {
-		return repository.create(newProduct()).id();
+		return await(repository.create(newProduct())).id();
 	}
 
 	private Product newProduct() {
 		return Product.create(repository.nextId(), "Sneakers", "2025 limited edition");
+	}
+
+	private static <T> T await(Uni<T> uni) {
+		return uni.await().atMost(TIMEOUT);
 	}
 
 	private static Price price(String value, Currency currency, String initDate, String endDate) {

@@ -6,6 +6,7 @@ import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
 
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -19,12 +20,11 @@ public class FindProduct {
 		this.cache = cache;
 	}
 
-	public Product execute(ProductId productId) {
-		return cache.get(productId).orElseGet(() -> {
-			Product product = products.findById(productId).orElseThrow(() -> new ProductNotFoundException(productId));
-			cache.put(product);
-			return product;
-		});
+	public Uni<Product> execute(ProductId productId) {
+		return cache.get(productId)
+				.onItem().ifNull().switchTo(() -> products.findById(productId)
+						.onItem().ifNotNull().call(cache::put))
+				.onItem().ifNull().failWith(() -> new ProductNotFoundException(productId));
 	}
 
 }

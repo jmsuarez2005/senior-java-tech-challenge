@@ -3,6 +3,7 @@ package com.mango.products.application;
 import com.mango.products.application.port.out.ProductRepository;
 import com.mango.products.domain.Product;
 
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -14,8 +15,9 @@ public class CreateProduct {
 		this.products = products;
 	}
 
-	public Product execute(String name, String description) {
-		return products.create(Product.create(products.nextId(), name, description));
+	public Uni<Product> execute(String name, String description) {
+		return Uni.createFrom().item(() -> Product.create(products.nextId(), name, description))
+				.chain(products::create);
 	}
 
 }
