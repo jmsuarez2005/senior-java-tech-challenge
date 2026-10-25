@@ -30,3 +30,11 @@
 - A single day is queried as the closed range `[day, day]`, so the overlap criterion is written once and shared by the write filter and the read projection.
 - Document size limit (16 MB) caps a product at roughly 150k embedded prices; past that the evolution is the bucket pattern (one document per product and period).
 - No cache in the first version: a read by `_id` is already a single index lookup. Caffeine (`AsyncCache` invalidated on writes) is the next step only if k6 shows a read p99 above 10 ms.
+- Annotated controllers rather than functional routes: bean validation and springdoc work out of the box, and the per-request overhead is the same on WebFlux.
+- Request DTOs build the domain objects inside `Mono.fromCallable`, so a domain validation failure travels as `Mono.error` and never as a throw from inside the pipeline.
+- Price JSON stays exactly `{value, initDate, endDate}` as in the statement; multi-currency reads take an optional `currency` query parameter (default EUR) instead of adding fields to the mandated responses.
+- `GET /products/{id}/price?date=` is the RESTful form (one price in force, a singular resource); `GET /products/{id}/prices?date=` stays because the external tests call it.
+- Errors are RFC 9457 `ProblemDetail`; validation failures add an `errors` list of `{field, message}` whether they come from bean validation or from the domain.
+- No `Location` on `POST /products/{id}/prices`: a price has no identity of its own, it is addressed through the product and a date.
+- BlockHound runs in the web integration tests with a small allow-list for library internals (Mongo driver session ids and pool locks, Hibernate Validator bundle loading); everything in `com.mango` must be non-blocking.
+- JUnit default timeout of 60 s: a reactive chain that never completes fails the test instead of hanging the build.
