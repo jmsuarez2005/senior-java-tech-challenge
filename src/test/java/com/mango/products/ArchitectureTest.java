@@ -18,6 +18,7 @@ class ArchitectureTest {
 			.adapter("web", "..adapters.in.web..")
 			.adapter("persistence", "..adapters.out.mongo..")
 			.adapter("cache", "..adapters.out.redis..")
+			.adapter("no-cache", "..adapters.out.nocache..")
 			.withOptionalLayers(true);
 
 	@ArchTest

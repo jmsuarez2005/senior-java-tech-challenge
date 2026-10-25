@@ -6,12 +6,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 @ActiveProfiles("test")
-@Import({ MongoTestcontainersConfiguration.class, RedisTestcontainersConfiguration.class })
+@Import(MongoTestcontainersConfiguration.class)
+@TestPropertySource(properties = "products.cache.enabled=false")
 class ProductsApplicationIT {
 
 	@Autowired

@@ -101,7 +101,7 @@ function isoDate(epochMs) {
 
 export function handleSummary(data) {
   return {
-    '/results/summary.json': JSON.stringify(data, null, 2),
+    [`/results/summary-${__ENV.RUN || 'latest'}.json`]: JSON.stringify(data, null, 2),
     stdout: textSummary(data, { indent: ' ', enableColors: false }),
   };
 }
