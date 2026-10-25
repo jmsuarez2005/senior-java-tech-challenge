@@ -11,15 +11,17 @@ public record DateRange(LocalDate initDate, LocalDate endDate) {
 		if (initDate == null) {
 			throw new DomainValidationException("initDate", "initDate is required");
 		}
+		if (!isValid(initDate, endDate)) {
+			throw new DomainValidationException("endDate", "endDate must be after initDate and not after " + OPEN_END);
+		}
 		if (endDate == null) {
 			endDate = OPEN_END;
 		}
-		if (endDate.isAfter(OPEN_END)) {
-			throw new DomainValidationException("endDate", "endDate must not be after " + OPEN_END);
-		}
-		if (!initDate.isBefore(endDate)) {
-			throw new DomainValidationException("endDate", "endDate must be after initDate");
-		}
+	}
+
+	public static boolean isValid(LocalDate initDate, LocalDate endDate) {
+		LocalDate end = endDate == null ? OPEN_END : endDate;
+		return initDate.isBefore(end) && !end.isAfter(OPEN_END);
 	}
 
 	public boolean isOpenEnded() {

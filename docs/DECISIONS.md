@@ -38,3 +38,6 @@
 - No `Location` on `POST /products/{id}/prices`: a price has no identity of its own, it is addressed through the product and a date.
 - BlockHound runs in the web integration tests with a small allow-list for library internals (Mongo driver session ids and pool locks, Hibernate Validator bundle loading); everything in `com.mango` must be non-blocking.
 - JUnit default timeout of 60 s: a reactive chain that never completes fails the test instead of hanging the build.
+- Input is validated at the edge before any use case runs: field constraints plus a class-level `@ValidPrice` for the cross-field rules (ordered period, decimals allowed by the currency). All violations come back in one 400 and nothing reaches the repository.
+- `@ValidPrice` calls the domain's own predicates (`DateRange.isValid`, `Money.isRepresentable`), so each rule is written once; the domain constructors keep enforcing the same invariants for any other entry point.
+- The validator lives next to the DTOs in `adapters.in.web.dto`: a separate `validation` package would depend on `dto` and vice versa.

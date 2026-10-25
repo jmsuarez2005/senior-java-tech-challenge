@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mango.products.adapters.in.web.dto.AddPriceRequest;
+import com.mango.products.adapters.in.web.dto.ApiDefaults;
 import com.mango.products.adapters.in.web.dto.CreateProductRequest;
 import com.mango.products.adapters.in.web.dto.PriceHistoryResponse;
 import com.mango.products.adapters.in.web.dto.PriceResponse;
@@ -40,9 +41,6 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/products")
 @Tag(name = "Products", description = "Products and their price history")
 class ProductController {
-
-	private static final String DEFAULT_CURRENCY = "EUR";
-	private static final Currency EUR = Currency.getInstance(DEFAULT_CURRENCY);
 
 	private final CreateProduct createProduct;
 	private final FindProduct findProduct;
@@ -83,7 +81,7 @@ class ProductController {
 	@ApiResponse(responseCode = "404", description = "Unknown product")
 	@ApiResponse(responseCode = "409", description = "Overlaps an existing price in the same currency")
 	Mono<PriceResponse> addPrice(@PathVariable String id, @Valid @RequestBody AddPriceRequest request) {
-		return Mono.fromCallable(() -> request.toPrice(EUR))
+		return Mono.fromCallable(request::toPrice)
 				.flatMap(price -> addPrice.execute(new ProductId(id), price))
 				.map(PriceResponse::from);
 	}
@@ -94,7 +92,7 @@ class ProductController {
 	@ApiResponse(responseCode = "404", description = "Unknown product or no price on that date")
 	Mono<PriceValueResponse> priceOn(@PathVariable String id,
 			@RequestParam @DateTimeFormat(iso = ISO.DATE) LocalDate date,
-			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = DEFAULT_CURRENCY) Currency currency) {
+			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = ApiDefaults.CURRENCY_CODE) Currency currency) {
 		return findPriceInForce.execute(new ProductId(id), date, currency).map(PriceValueResponse::from);
 	}
 
@@ -103,7 +101,7 @@ class ProductController {
 	@ApiResponse(responseCode = "404", description = "Unknown product or no price on that date")
 	Mono<PriceValueResponse> price(@PathVariable String id,
 			@RequestParam @DateTimeFormat(iso = ISO.DATE) LocalDate date,
-			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = DEFAULT_CURRENCY) Currency currency) {
+			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = ApiDefaults.CURRENCY_CODE) Currency currency) {
 		return priceOn(id, date, currency);
 	}
 
@@ -111,7 +109,7 @@ class ProductController {
 	@Operation(summary = "Get the price history", description = "Prices in one currency, ordered by initDate.")
 	@ApiResponse(responseCode = "404", description = "Unknown product")
 	Mono<PriceHistoryResponse> history(@PathVariable String id,
-			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = DEFAULT_CURRENCY) Currency currency) {
+			@Parameter(description = "ISO 4217 code") @RequestParam(defaultValue = ApiDefaults.CURRENCY_CODE) Currency currency) {
 		return findProduct.execute(new ProductId(id)).map(product -> PriceHistoryResponse.from(product, currency));
 	}
 

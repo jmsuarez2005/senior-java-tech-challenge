@@ -12,15 +12,19 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
+@ValidPrice
 public record AddPriceRequest(
 		@Schema(example = "99.99") @NotNull @Positive BigDecimal value,
 		@Schema(example = "2024-01-01") @NotNull LocalDate initDate,
 		@Schema(example = "2024-06-30", description = "Inclusive. Null means until further notice.") LocalDate endDate,
 		@Schema(example = "EUR", description = "ISO 4217 code. Defaults to EUR.") Currency currency) {
 
-	public Price toPrice(Currency defaultCurrency) {
-		Money money = Money.of(value, currency == null ? defaultCurrency : currency);
-		return new Price(money, new DateRange(initDate, endDate));
+	public Currency currencyOrDefault() {
+		return currency == null ? ApiDefaults.CURRENCY : currency;
+	}
+
+	public Price toPrice() {
+		return new Price(Money.of(value, currencyOrDefault()), new DateRange(initDate, endDate));
 	}
 
 }

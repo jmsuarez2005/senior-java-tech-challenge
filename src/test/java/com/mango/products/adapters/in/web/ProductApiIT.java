@@ -185,6 +185,20 @@ class ProductApiIT {
 	}
 
 	@Test
+	void reportsAllViolationsAndStoresNothing() {
+		String id = createProduct();
+
+		expectProblem(addPrice(id, Map.of("value", 9.999, "initDate", "2024-06-30", "endDate", "2024-01-01")), 400)
+				.jsonPath("$.errors.length()").isEqualTo(2)
+				.jsonPath("$.errors[?(@.field == 'value')]").exists()
+				.jsonPath("$.errors[?(@.field == 'endDate')]").exists();
+
+		client.get().uri("/products/{id}/prices", id).exchange()
+				.expectStatus().isOk()
+				.expectBody().jsonPath("$.prices").isEmpty();
+	}
+
+	@Test
 	void rejectsMalformedDate() {
 		String id = createProduct();
 
