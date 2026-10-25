@@ -160,6 +160,7 @@ class ProductApiIT {
 			negative value        | {"value": -1, "initDate": "2024-01-01"}                          | value
 			missing value         | {"initDate": "2024-01-01"}                                       | value
 			missing init date     | {"value": 10}                                                    | initDate
+			huge exponent         | {"value": 1e10000000, "initDate": "2024-01-01"}                  | value
 			""")
 	void rejectsInvalidPrice(String scenario, String body, String field) {
 		String id = createProduct();

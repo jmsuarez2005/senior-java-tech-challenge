@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.util.Currency;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -32,7 +33,11 @@ class MoneyTest {
 			"100.5,  JPY",
 			"1.2345, KWD",
 			"99999999999999999999, EUR",
+			"1e10000000, EUR",
+			"1e-10000000, EUR",
+			"-1e10000000, JPY",
 	})
+	@Timeout(1)
 	void rejectsValuesTheCurrencyCannotRepresentInsteadOfRounding(String value, String currency) {
 		assertThatThrownBy(() -> Money.of(new BigDecimal(value), Currency.getInstance(currency)))
 				.isInstanceOfSatisfying(DomainValidationException.class, e -> assertThat(e.field()).isEqualTo("value"));

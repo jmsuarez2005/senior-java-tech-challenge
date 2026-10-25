@@ -8,6 +8,9 @@ import java.util.OptionalLong;
 
 public record Money(long amountMinor, Currency currency) {
 
+	// Any number with up to 18 digits fits in a long.
+	private static final int MAX_DIGITS = 18;
+
 	public Money {
 		Objects.requireNonNull(currency, "currency");
 		fractionDigits(currency);
@@ -17,7 +20,7 @@ public record Money(long amountMinor, Currency currency) {
 		Objects.requireNonNull(value, "value");
 		long minor = toMinorUnits(value, fractionDigits(currency))
 				.orElseThrow(() -> new DomainValidationException("value",
-						value.toPlainString() + " is not a valid " + currency + " amount"));
+						value + " is not a valid " + currency + " amount"));
 		return new Money(minor, currency);
 	}
 
@@ -41,13 +44,15 @@ public record Money(long amountMinor, Currency currency) {
 		return currency.getDefaultFractionDigits();
 	}
 
+	// Size is checked before scaling: rescaling a crafted value like 1e10000000 would build a ten-million-digit number.
 	private static OptionalLong toMinorUnits(BigDecimal value, int fractionDigits) {
-		try {
-			return OptionalLong.of(value.setScale(fractionDigits, RoundingMode.UNNECESSARY).unscaledValue().longValueExact());
-		}
-		catch (ArithmeticException e) {
+		BigDecimal stripped = value.stripTrailingZeros();
+		boolean tooManyDecimals = stripped.scale() > fractionDigits;
+		boolean tooLarge = stripped.precision() - stripped.scale() + fractionDigits > MAX_DIGITS;
+		if (tooManyDecimals || tooLarge) {
 			return OptionalLong.empty();
 		}
+		return OptionalLong.of(stripped.setScale(fractionDigits, RoundingMode.UNNECESSARY).unscaledValue().longValueExact());
 	}
 
 }
