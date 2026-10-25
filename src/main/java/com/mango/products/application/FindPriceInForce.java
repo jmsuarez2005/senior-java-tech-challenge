@@ -3,13 +3,13 @@ package com.mango.products.application;
 import java.time.LocalDate;
 import java.util.Currency;
 
-import org.springframework.stereotype.Service;
-
 import com.mango.products.domain.Price;
 import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.ProductId;
 
-@Service
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
 public class FindPriceInForce {
 
 	private final FindProduct findProduct;

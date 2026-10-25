@@ -15,11 +15,6 @@ import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.mongodb.test.autoconfigure.DataMongoTest;
-import org.springframework.context.annotation.Import;
-
-import com.mango.products.MongoTestcontainersConfiguration;
 import com.mango.products.domain.DateRange;
 import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
@@ -28,14 +23,16 @@ import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
 
-@DataMongoTest
-@Import({ MongoTestcontainersConfiguration.class, MongoProductRepository.class })
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+
+@QuarkusTest
 class MongoProductRepositoryIT {
 
 	private static final Currency EUR = Currency.getInstance("EUR");
 	private static final Currency USD = Currency.getInstance("USD");
 
-	@Autowired
+	@Inject
 	MongoProductRepository repository;
 
 	@Test

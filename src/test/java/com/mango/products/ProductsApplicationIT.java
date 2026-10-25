@@ -1,50 +1,23 @@
 package com.mango.products;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static io.restassured.RestAssured.get;
+import static org.hamcrest.Matchers.equalTo;
 
-import org.apache.tomcat.util.threads.VirtualThreadExecutor;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.tomcat.TomcatWebServer;
-import org.springframework.boot.web.server.context.WebServerApplicationContext;
-import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.web.servlet.client.RestTestClient;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureRestTestClient
-@ActiveProfiles("test")
-@Import(MongoTestcontainersConfiguration.class)
-@TestPropertySource(properties = "products.cache.enabled=false")
+import io.quarkus.test.junit.QuarkusTest;
+
+@QuarkusTest
 class ProductsApplicationIT {
-
-	@Autowired
-	RestTestClient client;
-
-	@Autowired
-	WebServerApplicationContext context;
 
 	@Test
 	void healthIsUpWithMongo() {
-		client.get().uri("/actuator/health").exchange()
-				.expectStatus().isOk()
-				.expectBody().jsonPath("$.status").isEqualTo("UP");
+		get("/actuator/health").then().statusCode(200).body("status", equalTo("UP"));
 	}
 
 	@Test
-	void onlyHealthIsExposed() {
-		client.get().uri("/actuator/env").exchange().expectStatus().isNotFound();
-	}
-
-	@Test
-	void tomcatServesRequestsOnVirtualThreads() {
-		TomcatWebServer server = (TomcatWebServer) context.getWebServer();
-
-		assertThat(server.getTomcat().getConnector().getProtocolHandler().getExecutor())
-				.isInstanceOf(VirtualThreadExecutor.class);
+	void nothingElseIsExposedUnderActuator() {
+		get("/actuator/env").then().statusCode(404);
 	}
 
 }

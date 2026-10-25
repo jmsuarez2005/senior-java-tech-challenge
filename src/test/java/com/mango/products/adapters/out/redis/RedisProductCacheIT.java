@@ -10,34 +10,34 @@ import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.redis.test.autoconfigure.DataRedisTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.core.StringRedisTemplate;
 
-import com.mango.products.RedisTestcontainersConfiguration;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mango.products.domain.DateRange;
 import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
-import tools.jackson.databind.json.JsonMapper;
+import io.quarkus.redis.datasource.RedisDataSource;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
 
-@DataRedisTest
-@Import(RedisTestcontainersConfiguration.class)
+@QuarkusTest
 class RedisProductCacheIT {
 
 	private static final Currency EUR = Currency.getInstance("EUR");
 
-	@Autowired
-	StringRedisTemplate redis;
+	@Inject
+	RedisDataSource redis;
+
+	@Inject
+	ObjectMapper json;
 
 	RedisProductCache cache;
 
 	@BeforeEach
 	void setUp() {
-		cache = new RedisProductCache(redis, JsonMapper.builder().build(), Duration.ofMinutes(1));
+		cache = new RedisProductCache(redis, json, Duration.ofMinutes(1));
 	}
 
 	@Test

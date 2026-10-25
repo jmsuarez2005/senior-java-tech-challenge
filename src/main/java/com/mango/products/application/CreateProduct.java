@@ -1,11 +1,11 @@
 package com.mango.products.application;
 
-import org.springframework.stereotype.Service;
-
 import com.mango.products.application.port.out.ProductRepository;
 import com.mango.products.domain.Product;
 
-@Service
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
 public class CreateProduct {
 
 	private final ProductRepository products;
