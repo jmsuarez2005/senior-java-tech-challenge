@@ -1,153 +1,242 @@
-# 🧪 Prueba Técnica – Sistema de Productos con Precios Históricos
+# Products API
 
-## 🧩 Contexto
+Products with historical prices. A product can have many prices over time, but only one price in force per day
+and currency. Built with Spring Boot 4 on WebFlux and reactive MongoDB.
 
-Tu objetivo es diseñar e implementar una API que permita gestionar productos y sus precios históricos. Cada producto puede tener múltiples precios a lo largo del tiempo, pero solo un precio puede estar vigente para una misma fecha.
+The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
+[docs/DECISIONS.md](docs/DECISIONS.md).
 
----
+## Running it
 
-## 🎯 Objetivo
+Everything (API, MongoDB and the k6 load test) with one command:
 
-Queremos que demuestres tus conocimientos técnicos, tu criterio para tomar decisiones de diseño, y tu capacidad para resolver un problema realista de backend.
+```bash
+docker compose up --build
+```
 
-Puedes usar el **framework que prefieras**, la **arquitectura que consideres apropiada** y la **base de datos que mejor se adapte a tu solución**. Algunas opciones válidas incluyen Spring Boot, Quarkus, Java puro, PostgreSQL, MongoDB, MySQL, H2, etc.
+Only the API and its database:
 
-La implementación puede realizarse en **Java o Kotlin**.
+```bash
+docker compose up --build app
+```
 
-⚠️ **Uno de los requisitos más importantes de esta prueba es que tu solución tenga el mejor rendimiento posible**, tanto en tiempo de respuesta como en uso eficiente de recursos.
+The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui.html` and health at `/actuator/health`.
 
----
+For local development, start MongoDB in Docker and run the app with the Gradle wrapper (Java 21):
 
-## 📘 Requisitos funcionales
+```bash
+docker compose up -d mongo
+sh gradlew bootRun
+```
 
-### Endpoints obligatorios
+Tests need a running Docker daemon (Testcontainers starts MongoDB):
 
-Debes implementar los siguientes endpoints:
+```bash
+sh gradlew build
+```
 
-1. **Crear un producto**
-    - `POST /products`
-    - Body:
-      ```json
-      {
-        "name": "Zapatillas deportivas",
-        "description": "Modelo 2025 edición limitada"
-      }
-      ```
+The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`.
 
-2. **Agregar un precio a un producto**
-    - `POST /products/{id}/prices`
-    - Body:
-      ```json
-      {
-        "value": 99.99,
-        "initDate": "2024-01-01",
-        "endDate": "2024-06-30"
-      }
-      ```
-    - Reglas:
-        - No debe haber solapamiento de fechas con otros precios del mismo producto.
-        - `endDate` puede ser `null`.
-        - Validar que `initDate` < `endDate` si ambas existen.
+## API
 
-3. **Obtener el precio vigente de un producto en una fecha**
-    - `GET /products/{id}/prices?date=2024-04-15`
-    - Body:
-      ```json
-      {
-        "value": 99.99
-      }
-      ```
+| Method | Path | Result |
+|---|---|---|
+| `POST` | `/products` | `201`, `Location: /products/{id}`, body `{id, name, description}` |
+| `GET` | `/products/{id}` | `200`, the product |
+| `POST` | `/products/{id}/prices` | `201`, the created price |
+| `GET` | `/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
+| `GET` | `/products/{id}/price?date=YYYY-MM-DD` | same as above, preferred form |
+| `GET` | `/products/{id}/prices` | `200`, `{name, description, prices: [...]}` ordered by `initDate` |
 
-4. **Obtener el historial completo de precios de un producto**
-    - `GET /products/{id}/prices`
-    - Body:
-      ```json
-      {
-        "name": "Zapatillas deportivas",
-        "description": "Modelo 2025 edición limitada",
-        "prices": [
-          {
-            "value": 99.99,
-            "initDate": "2024-01-01",
-            "endDate": "2024-06-30"
-          },
-          {
-            "value": 199.99,
-            "initDate": "2025-01-01",
-            "endDate": "2025-06-30"
-          },
-        ]
-      }
-      ```
+```bash
+curl -s -X POST localhost:8080/products -H 'Content-Type: application/json' \
+  -d '{"name":"Zapatillas deportivas","description":"Modelo 2025 edición limitada"}'
 
-📌 **Nota**:  
-Los endpoints anteriores se utilizarán en las pruebas automáticas.  
-Sin embargo, **si consideras que alguno puede mejorarse para alinearse mejor con la semántica REST**, puedes hacerlo libremente, justificándolo en el README de tu proyecto.
+curl -s -X POST localhost:8080/products/{id}/prices -H 'Content-Type: application/json' \
+  -d '{"value":99.99,"initDate":"2024-01-01","endDate":"2024-06-30"}'
 
----
+curl -s 'localhost:8080/products/{id}/prices?date=2024-06-30'   # {"value":99.99}
+```
 
-## ✅ Criterios de evaluación
+### Rules
 
-- Modelado correcto de entidades y relaciones.
-- Validación robusta de reglas de negocio.
-- Diseño RESTful claro y consistente.
-- Organización del código y buenas prácticas.
-- Elección justificada del stack técnico.
-- **Rendimiento**: arranque rápido, respuestas ágiles, bajo uso de recursos.
-- Tests automatizados (unitarios o de integración).
-- Claridad en la documentación y facilidad de ejecución.
+- **Validity is a closed interval.** `[initDate, endDate]` includes both days, which is how the statement's examples
+  read: a price ending on `2024-06-30` is still the price on that day. Consequently a price starting on the same
+  day another one ends overlaps it.
+- `endDate` may be `null`, meaning "until further notice". `initDate` must be strictly before `endDate`.
+- `value` must be positive and cannot have more decimals than its currency allows (`9.999` EUR or `100.5` JPY are
+  rejected, never rounded).
+- Two prices of the same product and currency cannot overlap. Different currencies have independent timelines.
 
----
+### Changes and additions to the endpoints
 
-## 🚀 Desafíos opcionales (bonus)
+- `GET /products/{id}/price?date=` is added as the RESTful way to ask for *the* price in force: it is a single
+  resource, so the path is singular. `GET /products/{id}/prices?date=` is kept unchanged because the automated
+  tests use it, and it is marked as legacy in the OpenAPI description.
+- `GET /products/{id}` returns the product without its prices.
+- Multi-currency (bonus): `POST /products/{id}/prices` accepts an optional `currency` (ISO 4217, default `EUR`),
+  and both price reads accept `?currency=`. Responses keep exactly the shape of the statement; the currency is
+  implied by the request instead of added to every price.
+- `POST /products/{id}/prices` returns no `Location`: a price has no identity of its own, it is reached through
+  its product and a date.
 
-### 1. Prueba de rendimiento automatizada
+### Errors
 
-Puedes incluir una prueba automática de performance para validar el comportamiento de tu API bajo carga.
+Errors follow RFC 9457 (`application/problem+json`):
 
-#### ¿Qué debes entregar?
+| Status | When |
+|---|---|
+| `400` | Invalid body or parameters. `errors` lists every offending field with a message. |
+| `404` | Unknown product, or no price in force on that date. |
+| `409` | The new price overlaps an existing one in the same currency. |
 
-- Un archivo `docker-compose.yml` que:
-    - Levante tu aplicación.
-    - Ejecute un script o herramienta (por ejemplo, Gatling, k6, Artillery, JMeter, etc.) con múltiples peticiones concurrentes.
+```json
+{
+  "status": 400,
+  "title": "Bad Request",
+  "detail": "Request validation failed",
+  "errors": [
+    { "field": "value", "message": "must have at most 2 decimals for EUR" },
+    { "field": "endDate", "message": "must be after initDate and not after 9999-12-31" }
+  ]
+}
+```
 
-#### ¿Qué se evaluará?
+## Design
 
-- Tiempo de arranque de la aplicación.
-- Velocidad de ejecución de los endpoints.
-- Peticiones exitosas por segundo.
-- Uso de recursos bajo carga.
+### Architecture
 
-#### Restricciones importantes:
+Hexagonal, with the dependency rule checked by ArchUnit on every build:
 
-- **No se podrán modificar los valores de CPU ni memoria del contenedor de la aplicación ni del script de rendimiento**.
-- **Puedes añadir nuevos contenedores auxiliares**, siempre que **cada uno tenga un máximo de 1 GB de memoria y 500 Mi de CPU**.
+```
+adapters/in/web      controllers, request/response records, input validation, problem details
+application          one class per use case, plus the outbound port ProductRepository
+domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
+adapters/out/mongo   MongoDB documents, mapping and the ProductRepository implementation
+```
 
-Esto te permite aplicar estrategias como separación de servicios, caché, balanceo, precálculo, etc., **pero dentro de restricciones razonables de infraestructura**.
+A request is validated twice, on purpose. The web adapter checks it first (field constraints plus a cross-field
+`@ValidPrice`) and answers with all the violations at once, before any use case runs. The domain then enforces the
+same rules as invariants when the objects are built. Both use the same domain predicates, so each rule is written
+once.
 
----
+### MongoDB with embedded prices
 
-### 2. Otros desafíos opcionales
+One `products` collection; each document holds its prices:
 
-- Soporte para múltiples monedas por precio.
-- Endpoint para actualizar o eliminar precios.
-- Autenticación básica o con token.
-- Documentación con Swagger/OpenAPI.
-- Scripts para poblar datos de prueba automáticamente.
-- Soporte para paginación, ordenamiento o filtrado en el historial de precios.
+```json
+{ "_id": ObjectId, "name": "...", "description": "...",
+  "prices": [ { "amountMinor": 9999, "currency": "EUR", "initDate": "2024-01-01", "endDate": "2024-06-30" } ] }
+```
 
----
+Every operation the API needs is a lookup by `_id`, so the default index is the only one. Reading the history is
+one document read. Reading the price in force is one read with an `$elemMatch` projection, so MongoDB returns a
+single price instead of the whole history. A product without a match comes back without `prices`, which tells
+"unknown product" from "no price that day" in the same round trip.
 
-## 📦 Entrega
+### No overlap, enforced atomically
 
-### El `README.md` debe incluir:
+Adding a price is a single `updateOne`:
 
-- Instrucciones para compilar y ejecutar el proyecto.
-- Justificación de decisiones técnicas.
-- Indicaciones si agregaste mejoras, asumiste supuestos o cambiaste los endpoints.
-- Cómo ejecutar la prueba de rendimiento (si aplicaste ese desafío).
-- Para evitar copias preferimos que nos mandes un zip o nos envíes invitación de un repositorio PRIVADO de Github al contacto que te pasó la prueba.
+```
+filter: { _id: id, prices: { $not: { $elemMatch: { currency: c, initDate: { $lte: newEnd }, endDate: { $gte: newInit } } } } }
+update: { $push: { prices: newPrice } }
+```
 
----
+MongoDB applies the filter and the update atomically on one document, so two concurrent requests cannot both
+pass the check. There are no locks in Java, no transactions and no read-check-write. If nothing was modified, a
+second query (`exists`) tells a 404 from a 409; that query only runs when the insert is rejected. An integration
+test fires 50 overlapping inserts at once and expects exactly one to succeed.
 
-¡Buena suerte! Queremos ver cómo piensas, no solo cómo codificas.
+The relational equivalent is PostgreSQL's exclusion constraint
+(`EXCLUDE USING gist (product_id WITH =, currency WITH =, daterange(init_date, end_date, '[]') WITH &&)`).
+It is just as correct and arguably more declarative. MongoDB wins here on the read path: the history and the price
+in force are one document lookup with no join, and the prices of a product are always read together.
+
+### Open end as a sentinel
+
+A `null` end date is stored as `9999-12-31`. Every comparison, in Java and in MongoDB filters, is then the same
+two inequalities with no null branches. The API turns the sentinel back into `null`. Dates are stored as ISO
+`yyyy-MM-dd` strings, which compare like dates and carry no time zone.
+
+### Money in minor units
+
+Amounts are stored as a `long` in the currency's minor unit with the ISO currency code. The scale comes from
+`Currency.getDefaultFractionDigits()`, not from a fixed 100: JPY has no decimals and KWD has three.
+`BigDecimal` only exists at the HTTP boundary and `double` is never used.
+
+### Explicit prices per currency, not conversion
+
+Each currency has its own timeline of explicit prices. Retail prices in another currency are set for that market
+(rounded to price points, with local taxes and positioning), not derived from an exchange rate at read time.
+Converting on the fly would make a published price change whenever the rate moves.
+
+### Price lists as rules, materialized into this model
+
+Promotions, customer-specific price lists or "10% off this category" are rules evaluated on the write side. Their
+result is materialized into these explicit, non-overlapping periods. The read side then stays a lookup, which is
+what makes it fast, and any rule engine can be added without touching it.
+
+### WebFlux instead of virtual threads
+
+The statement weights performance and resource usage heavily. With 1 CPU and 1 GB for the app, an event loop with
+a fully reactive driver keeps a handful of threads and very little memory per in-flight request. Virtual threads
+would also work well with a blocking driver and simpler code. The deciding factors were the reactive MongoDB
+driver, which avoids blocking anywhere in the request path, and BlockHound, which proves it in the tests.
+
+## Performance
+
+Startup and footprint:
+
+- Lazy bean initialization and only the `health` actuator endpoint.
+- The Boot jar is extracted in the image and a CDS archive is created at build time with a training run.
+  Under the container's 1 CPU this cut startup from about 9.4 s to 6.4 s on my machine.
+- Serial GC (the app has a single CPU) and `MaxRAMPercentage=75`.
+- WARN logging, no per-request log.
+- Optional native image: `sh gradlew bootBuildImage -Pnative` (needs Docker; not required for the challenge).
+
+### Load test
+
+`docker compose up --build` waits for the API to be healthy, then k6:
+
+1. seeds 1,000 products with 5 yearly prices each (2020 to 2024),
+2. runs 2 minutes: 30 s ramp-up to 200 virtual users, then 90 s steady,
+3. mixes 70% price in force, 20% history and 10% new prices (on dates that never overlap),
+4. fails if `http_req_failed >= 1%` or `p(95) >= 50 ms`,
+5. writes the full report to `perf/results/summary.json`.
+
+The script is [perf/load-test.js](perf/load-test.js). Load parameters can be overridden, for example:
+
+```bash
+docker compose run --rm -e VUS=50 -e STEADY=30s benchmark
+```
+
+[scripts/seed.sh](scripts/seed.sh) seeds any running instance without k6:
+
+```bash
+scripts/seed.sh http://localhost:8080 1000 5
+```
+
+Resource limits in `docker-compose.yml` are the ones provided by the challenge for `app` and `benchmark` and are
+left untouched. MongoDB is an auxiliary container capped at 0.5 CPU and 1 GB.
+
+### Results
+
+| Metric | Value |
+|---|---|
+| Startup (`Started ... in`) | _to fill_ |
+| Requests per second | _to fill_ |
+| p95 latency | _to fill_ |
+| p99 latency | _to fill_ |
+| Failed requests | _to fill_ |
+| App memory under load | _to fill_ |
+
+## Known limits
+
+- A MongoDB document is capped at 16 MB, about 150k embedded prices per product. Past that, the bucket pattern
+  (one document per product and period) keeps the same queries.
+- Prices are immutable; there are no update or delete endpoints yet. "Updating" would mean closing the current
+  price and adding a new one.
+- With MongoDB capped at half a CPU, it is the first resource to saturate under read-heavy load.
+- No authentication.
+- The history is not paginated; a product's prices are returned in one response.

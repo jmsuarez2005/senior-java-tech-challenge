@@ -41,3 +41,6 @@
 - Input is validated at the edge before any use case runs: field constraints plus a class-level `@ValidPrice` for the cross-field rules (ordered period, decimals allowed by the currency). All violations come back in one 400 and nothing reaches the repository.
 - `@ValidPrice` calls the domain's own predicates (`DateRange.isValid`, `Money.isRepresentable`), so each rule is written once; the domain constructors keep enforcing the same invariants for any other entry point.
 - The validator lives next to the DTOs in `adapters.in.web.dto`: a separate `validation` package would depend on `dto` and vice versa.
+- k6 replaces the provided curl benchmark and keeps its service name and resource limits; it seeds through the API in `setup()` with batched requests, so the data goes through the same validation as real traffic.
+- Thresholds are scoped to the `mixed` scenario: seeding requests are not part of the measured load.
+- Load-test writes use a unique two-day window per (VU, iteration) in the future, so a 409 in the results always means a bug, never a test artifact.

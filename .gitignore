@@ -5,3 +5,5 @@ out/
 *.iml
 .vscode/
 .DS_Store
+perf/results/*
+!perf/results/.gitkeep

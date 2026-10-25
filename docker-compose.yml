@@ -45,13 +45,17 @@ services:
           memory: 1G
 
   benchmark:
-    build:
-      context: .
-      dockerfile: Dockerfile.benchmark
+    image: grafana/k6:2.3.0
     container_name: product-benchmark
     depends_on:
-      - app
-    command: sh -c "chmod +x /app/benchmark.sh && /app/benchmark.sh"
+      app:
+        condition: service_healthy
+    command: ["run", "/perf/load-test.js"]
+    environment:
+      BASE_URL: http://app:8080
+    volumes:
+      - ./perf:/perf:ro
+      - ./perf/results:/results
     deploy:
       resources:
         limits:
