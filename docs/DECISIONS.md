@@ -1,49 +1,79 @@
 # Decisions
 
-- Build stays on the provided Gradle 8.14.3 wrapper (not Maven): keep the scaffold the challenge ships with; `./gradlew build` is the verify step.
-- Spring Boot 4.1.2 (latest stable 4.x at start): all chosen libraries (springdoc 3.2.0, Testcontainers 2.0.5) support it, no fallback to 3.5.x needed.
+## Stack
+
+- Quarkus 3.40 (latest stable; 4.0 is still a beta) with virtual threads: chosen by measurement after trying Spring Boot 4 on WebFlux and Spring Boot 4 on MVC with virtual threads. Under the same limits it served about 35% more requests with a 27 to 42% lower p99, started in 2.5 s instead of 7 to 12 s and used half the memory. The runs are in `perf/RESULTS.md`.
+- Virtual threads instead of a reactive pipeline: the request path is plain imperative code on blocking drivers, and with one CPU for the app the reactive version spent more CPU per request than the blocking one.
+- Build stays on the provided Gradle 8.14.3 wrapper (not Maven): keep the scaffold the challenge ships with; `sh gradlew build` is the verify step. Quarkus 4 will need Gradle 9.6, which is a wrapper bump when that upgrade happens.
+- `./gradlew` is invoked as `sh gradlew`: the provided wrapper is committed without the executable bit.
 - Package root `com.mango.products`: kept from the provided scaffold.
-- `docker-compose.yml` keeps the provided 1 CPU / 1 GB limits on `app` and `benchmark`: the statement forbids changing them; only auxiliary containers are added.
-- MongoDB runs as an auxiliary container capped at 0.5 CPU / 1 GB with a 256 MB WiredTiger cache: fits the auxiliary-container limit with headroom for connections.
-- Serial GC in the container: the app gets 1 CPU, where G1's concurrent threads only add overhead.
-- CDS archive created by a training run at image build (`-Dspring.context.exit=onRefresh`): `AutoCreateSharedArchive` alone would only help from the second start of the same container.
-- Boot jar extracted with `-Djarmode=tools` in the image: CDS cannot archive classes from nested jars.
-- Lazy initialization on in `default`, off in `test`: fast startup in production, fail-fast wiring in tests.
-- Actuator exposes only `health`, which includes the Mongo indicator: the compose healthcheck then means "app and database ready".
-- Native image is opt-in via `./gradlew bootBuildImage -Pnative`: Gradle equivalent of a Maven `native` profile; not required to build locally.
-- `./gradlew` is invoked as `sh gradlew` in the Dockerfile: the provided wrapper is committed without the executable bit.
-- `initDate < endDate` strictly (as the statement says): a single-day price is rejected; with closed intervals `[d, d]` would otherwise be valid.
-- The open-end sentinel `9999-12-31` lives in `DateRange`: one place maps `null` to the sentinel, so the domain, Mongo filters and the web mapping never special-case open ranges; dates after it are rejected.
-- Domain exceptions are a sealed hierarchy without stack traces: expected outcomes (404/409 under load) should not pay for `fillInStackTrace`, and the web advice can switch over them exhaustively.
-- Positivity (`value > 0`) is a `Price` rule, not a `Money` rule: money can be zero or negative in general; a price cannot.
-- Currencies without a minor unit (`getDefaultFractionDigits() == -1`, e.g. XAU) are rejected: they have no defined scale for `amountMinor`.
-- Hexagonal layout `domain` / `application` / `adapters.in.web` / `adapters.out.mongo`, enforced by ArchUnit: the domain may only depend on `java.*`, adapters never depend on each other.
-- The repository port lives in `application.port.out`, not in `domain`: its signatures return `Mono`/`Flux`, and Reactor has no place in a plain-Java domain.
+
+## Architecture
+
+- Hexagonal layout `domain` / `application` / `adapters.in.web` / `adapters.out.mongo` / `adapters.out.redis`, enforced by ArchUnit: the domain may only depend on `java.*`, adapters never depend on each other.
+- `config` is the composition root and the only package allowed to pick adapters; ArchUnit ignores its dependencies on purpose.
+- Moving from Spring to Quarkus only rewrote adapters and wiring: the domain did not change, and the use cases only swapped `@Service` for `@ApplicationScoped`.
+- The outbound ports (`ProductRepository`, `ProductCache`) live in `application.port.out`, next to the use cases that need them, and keep the domain free of persistence concerns.
 - Use cases are concrete application services, one per use case, with no inbound port interfaces: a single implementation behind an interface adds indirection without a second adapter to justify it.
 - `ProductId` is a value object: ids cannot be mixed up with other strings in signatures, and blank ids fail in the domain.
+
+## Domain rules
+
+- `initDate < endDate` strictly (as the statement says): a single-day price is rejected; with closed intervals `[d, d]` would otherwise be valid.
+- The open-end sentinel `9999-12-31` lives in `DateRange`: one place maps `null` to the sentinel, so the domain, Mongo filters and the web mapping never special-case open ranges; dates after it are rejected.
+- Domain exceptions are a sealed hierarchy without stack traces: expected outcomes (404/409 under load) should not pay for `fillInStackTrace`, and the exception mapper switches over them exhaustively.
+- Positivity (`value > 0`) is a `Price` rule, not a `Money` rule: money can be zero or negative in general; a price cannot.
+- Currencies without a minor unit (`getDefaultFractionDigits() == -1`, e.g. XAU) are rejected: they have no defined scale for `amountMinor`.
+- The price in force is picked in memory by `Product.priceAt` from the whole aggregate, which is already one document read or one cache hit.
+
+## Persistence
+
 - The no-overlap invariant is guarded by a conditional atomic write exposed by the repository port, not by loading the aggregate: loading, checking and saving would need optimistic locking and retries to be correct under concurrency.
 - One `products` collection with prices embedded: every read is by `_id`, so the default `_id` index is the only one needed.
+- The plain MongoDB driver with `org.bson.Document` mapping instead of Panache: the adapter needs two queries and one atomic update, and the mapping stays explicit in one class.
 - Dates stored as ISO `yyyy-MM-dd` strings: they compare and sort like dates and have no time zone. The alternative, `Date` at midnight UTC, works too but leaks a time component into every query and mapping.
-- Ids are ObjectIds generated by the repository (`nextId()`): the aggregate has its identity before it is persisted, and `_id` stays a compact 12-byte key.
-- Overlap check and insert are one `findAndModify` (`$not $elemMatch` filter + `$push` + `$inc version`) that returns the stored document; an empty result triggers an `exists` only on the rejection path to tell 404 from 409.
+- Ids are ObjectIds generated by the repository (`nextId()`): the aggregate has its identity before it is persisted, and `_id` stays a compact 12-byte key. An id that is not a valid ObjectId is simply an unknown product.
+- Overlap check and insert are one `findOneAndUpdate` (`$not $elemMatch` filter + `$push` + `$inc version`) that returns the stored document; an empty result triggers a count only on the rejection path to tell 404 from 409.
 - Document size limit (16 MB) caps a product at roughly 150k embedded prices; past that the evolution is the bucket pattern (one document per product and period).
-- Annotated controllers rather than functional routes: bean validation and springdoc work out of the box, and the per-request overhead is the same on WebFlux.
-- Request DTOs build the domain objects inside `Mono.fromCallable`, so a domain validation failure travels as `Mono.error` and never as a throw from inside the pipeline.
+- MongoDB runs as an auxiliary container capped at 0.5 CPU / 1 GB with a 256 MB WiredTiger cache: fits the auxiliary-container limit with headroom for connections.
+
+## Cache
+
+- Redis cache (added after the first k6 run showed MongoDB pinned at its 0.5 CPU limit while the app sat mostly idle): it takes the 90% of read traffic off MongoDB and, unlike an in-process cache, stays correct with several app instances.
+- Redis is an opt-in improvement (`PRODUCTS_CACHE_ENABLED=true` and the compose profile `cache`): the base infrastructure is the minimum, and every improvement is switched on and measured in its own run.
+- Cache-aside lives in the application layer behind the `ProductCache` port: reads try the cache, fall back to MongoDB and fill the cache; writes put the product returned by the atomic write.
+- Every cache write is a compare-and-set on the aggregate `version` (a small Lua script), so a slow reader can never put back an older copy over a newer one written after a price was added.
+- The cache fails open: a Redis error or timeout (500 ms) is logged and treated as a miss, the Redis health check is disabled, and the API keeps serving from MongoDB.
+- The Redis client pool is 32 connections with 512 waiters: the default (6 and 24) overflowed under 200 concurrent requests and silently sent most reads to MongoDB.
+- Redis runs as an auxiliary container (0.5 CPU / 1 GB) without persistence, `maxmemory 256mb` and `allkeys-lru`; entries also expire after 10 minutes as a safety net.
+- Products are not cached on creation: the first read fills the entry, so products never read do not take memory.
+
+## API
+
 - Price JSON stays exactly `{value, initDate, endDate}` as in the statement; multi-currency reads take an optional `currency` query parameter (default EUR) instead of adding fields to the mandated responses.
-- `GET /products/{id}/price?date=` is the RESTful form (one price in force, a singular resource); `GET /products/{id}/prices?date=` stays because the external tests call it.
-- Errors are RFC 9457 `ProblemDetail`; validation failures add an `errors` list of `{field, message}` whether they come from bean validation or from the domain.
+- `GET /products/{id}/price?date=` is the RESTful form (one price in force, a singular resource); `GET /products/{id}/prices?date=` stays because the external tests call it. JAX-RS cannot route on a query parameter, so that one method returns the history without `date` and the price with it.
+- Query parameters are parsed in the resource rather than by JAX-RS converters: JAX-RS answers an unconvertible query parameter with 404, and a malformed date must be a 400 that names the field.
+- Errors are RFC 9457 problem details (`application/problem+json`); validation failures add an `errors` list of `{field, message}` whether they come from bean validation or from the domain.
 - No `Location` on `POST /products/{id}/prices`: a price has no identity of its own, it is addressed through the product and a date.
-- BlockHound runs in the web integration tests with a small allow-list for library internals (Mongo driver session ids and pool locks, Hibernate Validator bundle loading); everything in `com.mango` must be non-blocking.
-- JUnit default timeout of 60 s: a reactive chain that never completes fails the test instead of hanging the build.
+- Health stays at `/actuator/health` (configured in Quarkus) so the compose healthcheck and existing tooling did not change; nothing else is exposed there.
+
+## Validation
+
 - Input is validated at the edge before any use case runs: field constraints plus a class-level `@ValidPrice` for the cross-field rules (ordered period, decimals allowed by the currency). All violations come back in one 400 and nothing reaches the repository.
 - `@ValidPrice` calls the domain's own predicates (`DateRange.isValid`, `Money.isRepresentable`), so each rule is written once; the domain constructors keep enforcing the same invariants for any other entry point.
 - The validator lives next to the DTOs in `adapters.in.web.dto`: a separate `validation` package would depend on `dto` and vice versa.
+
+## Runtime and container
+
+- Serial GC in the container: the app gets 1 CPU, where G1's concurrent threads only add overhead.
+- CDS archive created by a training run at image build (start, then a graceful stop that writes the archive): `AutoCreateSharedArchive` alone would only help from the second start of the same container.
+- Native image is not built: it would cut startup further but needs GraalVM in the build and a longer image build; the JVM image already starts in about 2.5 s.
+
+## Tests and load test
+
+- Integration tests use Quarkus Dev Services, which start MongoDB and Redis in containers; they need a Docker daemon and no test-specific container code.
+- Virtual threads are checked under load, not assumed: a thread dump shows the virtual-thread carriers, and `-Djdk.tracePinnedThreads` reported no pinning with the Mongo and Redis clients.
+- JUnit default timeout of 60 s: a call that never returns fails the test instead of hanging the build.
 - k6 replaces the provided curl benchmark and keeps its service name and resource limits; it seeds through the API in `setup()` with batched requests, so the data goes through the same validation as real traffic.
 - Thresholds are scoped to the `mixed` scenario: seeding requests are not part of the measured load.
 - Load-test writes use a unique two-day window per (VU, iteration) in the future, so a 409 in the results always means a bug, never a test artifact.
-- Redis cache (added after the first k6 run showed MongoDB pinned at its 0.5 CPU limit while the app sat mostly idle): it takes the 90% of read traffic off MongoDB and, unlike an in-process cache, stays correct with several app instances.
-- Cache-aside lives in the application layer behind a `ProductCache` port: reads try the cache, fall back to MongoDB and fill the cache; writes put the product returned by the atomic write. The price in force is then computed in memory by `Product.priceAt`, so the `$elemMatch` projection is no longer needed.
-- Every cache write is a compare-and-set on the aggregate `version` (a small Lua script), so a slow reader can never put back an older copy over a newer one written after a price was added.
-- The cache fails open: a Redis error or timeout (500 ms) is logged and treated as a miss, the Redis health indicator is disabled, and the API keeps serving from MongoDB.
-- Redis runs as an auxiliary container (0.5 CPU / 1 GB) without persistence, `maxmemory 256mb` and `allkeys-lru`; entries also expire after 10 minutes as a safety net.
-- Products are not cached on creation: the first read fills the entry, so products never read do not take memory.

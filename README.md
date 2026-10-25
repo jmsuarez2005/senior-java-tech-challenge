@@ -1,7 +1,7 @@
 # Products API
 
 Products with historical prices. A product can have many prices over time, but only one price in force per day
-and currency. Built with Spring Boot 4 on WebFlux and reactive MongoDB, with an optional Redis cache.
+and currency. Built with Quarkus on Java 21 virtual threads and MongoDB, with an optional Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md).
@@ -22,16 +22,17 @@ docker compose up --build app
 
 Redis is optional and off by default; see [Load test](#load-test) to switch it on.
 
-The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui.html` and health at `/actuator/health`.
+The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui`, the OpenAPI document at
+`/q/openapi` and health at `/actuator/health`.
 
-For local development, start MongoDB (and Redis, if you enable the cache) and run the app with the Gradle wrapper (Java 21):
+For local development, run Quarkus dev mode with the Gradle wrapper (Java 21). Dev Services start MongoDB and Redis
+in Docker for you:
 
 ```bash
-docker compose up -d mongo redis
-sh gradlew bootRun
+sh gradlew quarkusDev
 ```
 
-Tests need a running Docker daemon (Testcontainers starts MongoDB and Redis):
+Tests need a running Docker daemon for the same reason (Dev Services start MongoDB and Redis):
 
 ```bash
 sh gradlew build
@@ -43,7 +44,7 @@ The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`
 
 | Method | Path | Result |
 |---|---|---|
-| `POST` | `/products` | `201`, `Location: /products/{id}`, body `{id, name, description}` |
+| `POST` | `/products` | `201`, `Location` pointing to `/products/{id}`, body `{id, name, description}` |
 | `GET` | `/products/{id}` | `200`, the product |
 | `POST` | `/products/{id}/prices` | `201`, the created price |
 | `GET` | `/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
@@ -111,12 +112,17 @@ Errors follow RFC 9457 (`application/problem+json`):
 Hexagonal, with the dependency rule checked by ArchUnit on every build:
 
 ```
-adapters/in/web      controllers, request/response records, input validation, problem details
+adapters/in/web      JAX-RS resource, request/response records, input validation, problem details
 application          one class per use case, plus the outbound ports ProductRepository and ProductCache
 domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
-adapters/out/mongo   MongoDB documents, mapping and the ProductRepository implementation
-adapters/out/redis   the ProductCache implementation
+adapters/out/mongo   MongoDB document mapping and the ProductRepository implementation
+adapters/out/redis   the ProductCache implementation (adapters/out/nocache when the cache is off)
+config               composition root: picks the cache implementation at startup
 ```
+
+The architecture paid off when the framework changed. The project started on Spring Boot; moving to Quarkus meant
+rewriting the adapters and the wiring, while the domain did not change and the use cases only swapped
+`@Service` for `@ApplicationScoped`.
 
 A request is validated twice, on purpose. The web adapter checks it first (field constraints plus a cross-field
 `@ValidPrice`) and answers with all the violations at once, before any use case runs. The domain then enforces the
@@ -138,7 +144,7 @@ history included, is one document read; the price in force on a date is then pic
 
 ### No overlap, enforced atomically
 
-Adding a price is a single `findAndModify` that returns the stored document:
+Adding a price is a single `findOneAndUpdate` that returns the stored document:
 
 ```
 filter: { _id: id, prices: { $not: { $elemMatch: { currency: c, initDate: { $lte: newEnd }, endDate: { $gte: newInit } } } } }
@@ -147,7 +153,7 @@ update: { $push: { prices: newPrice }, $inc: { version: 1 } }
 
 MongoDB applies the filter and the update atomically on one document, so two concurrent requests cannot both
 pass the check. There are no locks in Java, no transactions and no read-check-write. If nothing matched, a
-second query (`exists`) tells a 404 from a 409; that query only runs when the insert is rejected. An integration
+second query tells a 404 from a 409; that query only runs when the insert is rejected. An integration
 test fires 50 overlapping inserts at once and expects exactly one to succeed.
 
 The relational equivalent is PostgreSQL's exclusion constraint
@@ -167,6 +173,8 @@ traffic being reads. Products are now cached in Redis, cache-aside, behind the `
 - The cache fails open: if Redis is down or slow (500 ms timeout), the request is served from MongoDB and the
   error is logged. Redis is not part of the health check for the same reason.
 - Redis runs without persistence, with `maxmemory 256mb`, LRU eviction and a 10-minute TTL as a safety net.
+- The client pool is sized for the load: 32 connections and 512 waiters. With the defaults (6 and 24) the queue
+  overflowed under 200 concurrent requests, the cache failed open on most reads and tail latency tripled.
 
 Redis was chosen over an in-process cache because it stays correct when the API runs on several instances.
 The cost is a network round trip and JSON decoding on every read, which an in-process near cache in front of
@@ -196,23 +204,37 @@ Promotions, customer-specific price lists or "10% off this category" are rules e
 result is materialized into these explicit, non-overlapping periods. The read side then stays a lookup, which is
 what makes it fast, and any rule engine can be added without touching it.
 
-### WebFlux instead of virtual threads
+### Quarkus and virtual threads, chosen by measurement
 
-The statement weights performance and resource usage heavily. With 1 CPU and 1 GB for the app, an event loop with
-a fully reactive driver keeps a handful of threads and very little memory per in-flight request. Virtual threads
-would also work well with a blocking driver and simpler code. The deciding factors were the reactive MongoDB
-driver, which avoids blocking anywhere in the request path, and BlockHound, which proves it in the tests.
+The statement weights startup, response times and resource usage, and the app only gets 1 CPU and 1 GB. Three
+implementations of the same design were load-tested under identical limits (details in
+[perf/RESULTS.md](perf/RESULTS.md)):
+
+| Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
+|---|---|---|---|---|---|
+| Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
+| Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
+| **Quarkus 3, virtual threads** | **~1,790** | **~161 ms** | **~221 ms** | **2.5 s** | **~150 MB** |
+
+- **Virtual threads over a reactive pipeline.** With one CPU, the cost that matters is CPU per request. The
+  imperative code on blocking drivers spent less of it than the reactive operator chains, and it is simpler to read
+  and debug. The Mongo and Redis clients were checked for pinning under load and showed none.
+- **Quarkus over Spring Boot.** Quarkus resolves dependency injection and most framework setup at build time, so
+  less work happens at startup and per request. It started four to five times faster, used half the memory and
+  served about a third more requests with a lower tail latency.
 
 ## Performance
 
 Startup and footprint:
 
-- Lazy bean initialization and only the `health` actuator endpoint.
-- The Boot jar is extracted in the image and a CDS archive is created at build time with a training run.
-  Under the container's 1 CPU this cut startup from about 9.4 s to 6.4 s on my machine.
+- Quarkus does dependency injection and configuration at build time; the app starts in about 2.5 s inside its
+  1 CPU container and uses about 150 MB under load.
+- A CDS archive is created at image build with a training run (start, then a graceful stop), so the first start in
+  a fresh container already loads classes from it.
 - Serial GC (the app has a single CPU) and `MaxRAMPercentage=75`.
-- WARN logging, no per-request log.
-- Optional native image: `sh gradlew bootBuildImage -Pnative` (needs Docker; not required for the challenge).
+- WARN logging, no per-request log, and nothing but health under `/actuator`.
+- A native image is possible with Quarkus but not built: it needs GraalVM in the build, and the JVM image already
+  starts fast enough for this workload.
 
 ### Load test
 
@@ -255,6 +277,9 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
   (one document per product and period) keeps the same queries.
 - Prices are immutable; there are no update or delete endpoints yet. "Updating" would mean closing the current
   price and adding a new one.
-- Writes always go to MongoDB, capped at half a CPU; a write-heavy load would saturate it before the app.
+- MongoDB, capped at half a CPU, is the busiest container once the cache is on: writes always go there. It is the
+  next thing to scale (a replica for reads that miss the cache, or a write-behind buffer for prices).
+- Absolute numbers in `perf/RESULTS.md` come from a 2 CPU machine where the containers compete for the host; the
+  comparisons between runs hold, the k6 thresholds (`p95 < 50 ms`) are not met there.
 - No authentication.
 - The history is not paginated; a product's prices are returned in one response.
