@@ -329,15 +329,32 @@ In front of Redis sits an in-process cache (Caffeine) that holds the built `Prod
 lookup: no network round trip, no JSON decoding, no rebuilding of the aggregate. Writes made through this instance
 refresh it at once, with the same version rule as Redis, so an older copy never replaces a newer one.
 
-It is the fastest configuration measured. On `main`, against the same code with Redis only, it served 26% more
-requests with 25% less app CPU per request and a 32% lower median latency; in branch 06 the gain was 69%. The p99
-got worse (about 650 ms against 500 ms in the latest runs): the faster reads let more writes per second reach
-MongoDB, which only has half a CPU, and those writes are the slowest requests. Details in
-[perf/RESULTS.md](perf/RESULTS.md).
+It is the best configuration measured, and it is what `main` runs by default:
 
-It is on by default because the challenge runs one instance and grades performance. It is a trade-off that changes
-with the deployment, explained in the next section; `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off and leaves
-Redis as the only cache.
+- **Same load, lower latency at every percentile.** At a fixed 450 requests per second, against the same code with
+  Redis only: median 2.7 ms against 6.7 ms, p95 43 ms against 104 ms, p99 102 ms against 227 ms (averages of two
+  runs each). It is the only configuration that meets the statement's load-test threshold, p95 under 50 ms.
+- **More requests with less CPU.** In the closed-loop scenario of the statement it served 26% more requests with
+  25% less app CPU per request (69% more in branch 06, measured on a healthy machine).
+- One closed-loop result looks worse and is not: p99 rose about 30% there because the app answered faster, so more
+  writes per second reached MongoDB (half a CPU) and queued. At the same arrival rate that effect disappears.
+
+Details in [perf/RESULTS.md](perf/RESULTS.md). It is the right default for the challenge, which runs one instance and
+grades performance. With several instances the trade-off changes, as the next sections explain;
+`PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off and leaves Redis as the only cache.
+
+### Pros and cons of the chosen configuration
+
+Local in-process cache (5 s) in front of Redis (1 min), in front of MongoDB:
+
+| Pros | Cons |
+|---|---|
+| Lowest latency measured at every percentile under the same load; the only setup with p95 under 50 ms | With several instances, each serves its own copy: a price changed through another instance can be up to 5 s stale here |
+| Most requests per second and least app CPU per request | No read-your-writes across instances behind a load balancer; a client can see a change and then the old value |
+| A hit needs no network, no JSON decoding and no rebuilding of the aggregate; Redis load halves | Not acceptable as-is for reads that charge money in a multi-instance deployment |
+| Writes through the same instance are visible immediately; versions stop an older copy replacing a newer one | Each instance holds its own copy (up to 10,000 products) and starts cold after a deploy or scale-out |
+| Redis behind it keeps instances sharing data on misses and keeps working if one instance restarts | One more layer to reason about when debugging stale data |
+| Turned off with one environment variable, no code change | Faster reads push more writes per second to MongoDB, which becomes the next bottleneck |
 
 ## Local cache in distributed microservices
 
@@ -435,11 +452,13 @@ The script is [perf/load-test.js](perf/load-test.js). Load parameters can be ove
 docker compose run --rm -e VUS=50 -e STEADY=30s benchmark
 ```
 
-Every run gets a name for its report. To compare against the minimal setup, switch the cache off:
+Every run gets a name for its report. `RATE=450` switches k6 from the statement's closed loop to a fixed arrival
+rate, which compares configurations under the same load. To compare against simpler setups, switch caches off:
 
 ```bash
 RUN=no-cache PRODUCTS_CACHE_ENABLED=false docker compose up --build
 RUN=redis-only PRODUCTS_LOCAL_CACHE_ENABLED=false docker compose up --build
+RUN=fixed-rate RATE=450 docker compose up --build
 ```
 
 [scripts/seed.sh](scripts/seed.sh) seeds any running instance without k6:
@@ -519,7 +538,7 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
    stale cache after a failed write, missing timeouts) cost about 4% of throughput, all of it the circuit breaker.
 7. **A local cache** in the app was the biggest gain of all (+69% throughput in branch 06, +26% on `main`). It is on
    by default for the challenge's single instance, with a switch and the consistency trade-off documented for
-   distributed deployments.
+   distributed deployments. A fixed-rate comparison confirmed it is faster at every percentile, p99 included.
 
 
 | Branch | Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
@@ -552,8 +571,7 @@ thinner than Reactor on WebFlux. That is why the model was measured again instea
   the same without it.
 - **A local cache that is only right for one instance.** It is the fastest option measured, and with several
   instances each would answer from its own copy for up to 5 s after another one changed a price. It is on for the
-  challenge and documented, with a switch, for distributed deployments; it also raises p99 because writes reach
-  MongoDB faster.
+  challenge and documented, with a switch, for distributed deployments.
 - **Keycloak is a fifth container.** It adds memory (about 500 MB) and startup time to the compose stack, in exchange
   for the standard microservice security model instead of credentials checked inside the API.
 

@@ -10,7 +10,8 @@
 - Package root `com.mango.products`: kept from the provided scaffold.
 
 - Every experiment has its own branch (`experiment/01-...` to `experiment/06-...`) frozen at the measured code, so any row of `perf/RESULTS.md` can be run again; `main` carries the chosen design.
-- The in-process near cache (branch 06) is on `main` and on by default: it was the best result measured (+69% throughput in branch 06, +26% on `main`) and the challenge runs one instance. Its price is consistency across instances (each serves its own copy for up to 5 s after a change made elsewhere) and a higher p99 from writes reaching MongoDB faster; both are documented, and `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off for distributed deployments.
+- The in-process near cache (branch 06) is on `main` and on by default: it was the best result measured (+69% throughput in branch 06, +26% on `main`) and the challenge runs one instance. At a fixed arrival rate it is faster at every percentile (p99 -55%) and the only setup under p95 50 ms; the higher p99 seen in the closed loop came from more writes per second queueing in MongoDB. Its price is consistency across instances (each serves its own copy for up to 5 s after a change made elsewhere); that is documented with pros and cons, and `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off for distributed deployments.
+- The load test has an open-model mode (`RATE=n`, constant arrival rate) next to the statement's closed loop: comparing configurations at the same load separates a faster component from the extra queueing its speed causes elsewhere.
 
 ## Architecture
 

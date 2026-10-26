@@ -13,19 +13,34 @@ const SEED_FIRST_YEAR = 2020;
 const WRITE_EPOCH = Date.UTC(2030, 0, 1);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export const options = {
-  setupTimeout: '180s',
-  scenarios: {
-    mixed: {
+const RAMP_UP = __ENV.RAMP_UP || '30s';
+const STEADY = __ENV.STEADY || '90s';
+const RATE = Number(__ENV.RATE || 0);
+
+// Default: closed loop, each VU sends its next request as soon as the last one answers (the statement's scenario).
+// RATE=n: open model at n requests per second whatever the latency, to compare configurations under the same load.
+const MIXED = RATE > 0
+  ? {
+      executor: 'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit: '1s',
+      preAllocatedVUs: 200,
+      maxVUs: 400,
+      stages: [{ duration: RAMP_UP, target: RATE }, { duration: STEADY, target: RATE }],
+    }
+  : {
       executor: 'ramping-vus',
       startVUs: 0,
       stages: [
-        { duration: __ENV.RAMP_UP || '30s', target: Number(__ENV.VUS || 200) },
-        { duration: __ENV.STEADY || '90s', target: Number(__ENV.VUS || 200) },
+        { duration: RAMP_UP, target: Number(__ENV.VUS || 200) },
+        { duration: STEADY, target: Number(__ENV.VUS || 200) },
       ],
       gracefulRampDown: '5s',
-    },
-  },
+    };
+
+export const options = {
+  setupTimeout: '180s',
+  scenarios: { mixed: MIXED },
   thresholds: {
     'http_req_failed{scenario:mixed}': ['rate<0.01'],
     'http_req_duration{scenario:mixed}': ['p(95)<50'],

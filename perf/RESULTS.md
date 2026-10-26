@@ -129,8 +129,22 @@ process:
 | F2 | `main`, near cache + Redis (repeat) | 947 us | 785 | 139 ms | 402 ms | 664 ms |
 
 Throughput +26%, app CPU per request -25%, median -32%, p95 +5%, p99 +31%. Redis CPU halved while MongoDB's went
-from about 8% to 13 to 29%: faster reads let more writes per second reach MongoDB, capped at half a CPU, and the
-writes are the slowest requests. In branch 06, measured on a healthy host, p99 did not move and throughput was +69%.
+from about 8% to 13 to 29%. The higher p99 raised a doubt: in a closed loop, a faster app also sends more writes per
+second to MongoDB (half a CPU), so the tail could come from queueing there rather than from the cache. Comparing at
+the same arrival rate settles it.
+
+**Same load, fixed arrival rate (k6 `RATE=450`, open model, alternated):**
+
+| Run | Code | median | p95 | p99 | Dropped |
+|---|---|---|---|---|---|
+| G1 | `main`, Redis only | 7.7 ms | 122 ms | 295 ms | 0 |
+| H1 | `main`, local cache + Redis | 2.9 ms | 47 ms | 114 ms | 0 |
+| G2 | `main`, Redis only (repeat) | 5.7 ms | 86 ms | 158 ms | 0 |
+| H2 | `main`, local cache + Redis (repeat) | 2.5 ms | 40 ms | 91 ms | 0 |
+
+At the same load the local cache is faster at every percentile: median -60%, p95 -59%, p99 -55%, and it is the only
+configuration under the statement's p95 threshold of 50 ms. The closed-loop p99 increase was the queueing effect,
+not the cache. This is why `main` runs with it.
 
 ## The near cache does not scale out by itself
 

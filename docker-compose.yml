@@ -107,6 +107,7 @@ services:
     environment:
       BASE_URL: http://app:8080
       RUN: ${RUN:-latest}
+      RATE: ${RATE:-0}
     volumes:
       - ./perf:/perf:ro
       - ./perf/results:/results
