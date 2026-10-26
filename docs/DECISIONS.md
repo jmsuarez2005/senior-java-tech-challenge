@@ -9,6 +9,9 @@
 - `./gradlew` is invoked as `sh gradlew`: the provided wrapper is committed without the executable bit.
 - Package root `com.mango.products`: kept from the provided scaffold.
 
+- Every experiment has its own branch (`experiment/01-...` to `experiment/06-...`) frozen at the measured code, so any row of `perf/RESULTS.md` can be run again; `main` carries the chosen design.
+- The in-process near cache (branch 06) is not on `main` despite +69% throughput: each instance would serve its own copy for up to its TTL after another instance changed a price, and a scalable version needs invalidation that this benchmark (one instance) cannot show the cost of.
+
 ## Architecture
 
 - Hexagonal layout `domain` / `application` / `adapters.in.web` / `adapters.out.mongo` / `adapters.out.redis`, enforced by ArchUnit: the domain may only depend on `java.*`, adapters never depend on each other.
@@ -66,6 +69,9 @@
 - Errors are RFC 9457 problem details (`application/problem+json`); validation failures add an `errors` list of `{field, message}` whether they come from bean validation or from the domain.
 - No `Location` on `POST /products/{id}/prices`: a price has no identity of its own, it is addressed through the product and a date.
 - Health stays at `/actuator/health` (configured in Quarkus) so the compose healthcheck and existing tooling did not change; nothing else is exposed there.
+- Update and delete identify a price by currency and `initDate`, unique because periods never overlap; there is no separate price id to keep in sync. Replacement is one `findOneAndUpdate` with an array filter that re-checks overlaps against the other prices.
+- History filtering, sorting and paging run in memory on the aggregate already read whole; the body keeps the statement's shape and paging travels in `X-Total-Count` and RFC 8288 `Link` headers, so default clients see no change.
+- Swagger UI is the documentation entry point, with the OAuth client-credentials scheme declared so protected calls can be made from the page; the automatic security scheme Quarkus adds for OIDC is turned off because it duplicated it.
 
 ## Validation
 
@@ -79,6 +85,23 @@
 - CDS archive created by a training run at image build (start, then a graceful stop that writes the archive): `AutoCreateSharedArchive` alone would only help from the second start of the same container.
 - Native image is not built: it would cut startup further but needs GraalVM in the build and a longer image build; the JVM image already starts in about 2.5 s.
 - Quarkus sizes the event loops from the CPUs it sees (two for the 1 CPU container); no thread pool tuning is needed for request handling.
+
+## Security
+
+- OAuth 2.0 client credentials, the standard service-to-service flow: a separate authorization server (Keycloak in the compose file, realm imported at startup) issues JWTs, and the API only validates them against the server's public keys, with no call per request.
+- Keycloak runs in the compose file instead of a hosted free service: it needs no account, works offline and keeps the whole setup reproducible.
+- Scope-based authorization: `products:write` is required to change or delete prices; a reader client without it shows the `403` path.
+- The four mandatory endpoints stay public by default because the statement's automated tests call them without a token; `PRODUCTS_AUTH_ALL=true` requires a valid token on every `/products` call.
+- Authentication is lazy (`quarkus.http.auth.proactive=false`): the Quarkus default ran the security chain on every request, public ones included.
+- Tests use the mock authorization server from `quarkus-test-oidc-server` and sign their own tokens, so the real bearer-token path is tested without starting Keycloak.
+
+## Observability
+
+- JSON logs in production (plain text in dev and tests), one object per line with the request id, so a log shipper can index them without parsing.
+- Business events (product created, price added, replaced, removed, rejected) are logged at INFO; reads are not logged individually, their volume belongs in metrics.
+- `X-Request-Id` is set by a Vert.x router handler, taken from the caller when present: cheaper than a JAX-RS filter pair and it covers every route.
+- JBoss Logging instead of Log4j 2 as the API: it is what Quarkus uses, and Quarkus bridges Log4j 2, SLF4J and JUL into the same log manager; Log4j 2 as a backend is not supported by Quarkus.
+- Prometheus metrics for the JVM, cache reads by result, cache write errors and the circuit breaker. Per-request HTTP timers are off by default: they cost about 18% CPU per request in the measurements, the largest single cost of the observability.
 
 ## Tests and load test
 

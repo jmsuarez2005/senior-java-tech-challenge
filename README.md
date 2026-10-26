@@ -2,7 +2,8 @@
 
 Products with historical prices. A product can have many prices over time, but only one price in force per day
 and currency. Built with Java 21 on the Quarkus reactive stack (Mutiny on the Vert.x event loop) and MongoDB, with
-a Redis cache.
+a Redis cache, OAuth 2.0 client-credentials security for service-to-service calls, structured logs and Prometheus
+metrics.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md). Why this stack was chosen is explained at the end, in
@@ -10,13 +11,13 @@ The original statement is in [SPEC.md](SPEC.md). Every design decision, one line
 
 ## Running it
 
-Everything (API, MongoDB, Redis and the k6 load test) with one command:
+Everything (API, MongoDB, Redis, Keycloak and the k6 load test) with one command:
 
 ```bash
 docker compose up --build
 ```
 
-Only the API with MongoDB and Redis:
+Only the API with its dependencies:
 
 ```bash
 docker compose up --build app
@@ -24,17 +25,26 @@ docker compose up --build app
 
 Redis is on by default. `PRODUCTS_CACHE_ENABLED=false` runs without the cache (see [Load test](#load-test)).
 
-The API listens on `http://localhost:8080`, Swagger UI is at `/swagger-ui`, the OpenAPI document at
-`/q/openapi` and health at `/actuator/health`.
+| URL | What |
+|---|---|
+| `http://localhost:8080/swagger-ui` | Swagger UI: the interactive API documentation (see [Swagger UI](#swagger-ui)) |
+| `http://localhost:8080/actuator/health` | Health (MongoDB connection included) |
+| `http://localhost:8080/q/metrics` | Prometheus metrics |
+| `http://localhost:8180` | Keycloak, the OAuth 2.0 authorization server (admin / admin) |
 
-For local development, run Quarkus dev mode with the Gradle wrapper (Java 21). Dev Services start MongoDB and Redis
-in Docker for you:
+Keycloak runs on half a CPU, so on a small machine the first start of the whole stack takes one to three minutes;
+the API itself starts in about 2.5 s once its dependencies are up.
+
+For local development, start Keycloak from the compose file and run Quarkus dev mode with the Gradle wrapper
+(Java 21); Dev Services start MongoDB and Redis in Docker for you:
 
 ```bash
+docker compose up -d keycloak
 sh gradlew quarkusDev
 ```
 
-Tests need a running Docker daemon for the same reason (Dev Services start MongoDB and Redis):
+Tests need a running Docker daemon (Dev Services start MongoDB and Redis; OAuth is tested against a mock
+authorization server):
 
 ```bash
 sh gradlew build
@@ -51,7 +61,9 @@ The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`
 | `POST` | `/products/{id}/prices` | `201`, the created price |
 | `GET` | `/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
 | `GET` | `/products/{id}/price?date=YYYY-MM-DD` | same as above, preferred form |
-| `GET` | `/products/{id}/prices` | `200`, `{name, description, prices: [...]}` ordered by `initDate` |
+| `GET` | `/products/{id}/prices` | `200`, `{name, description, prices: [...]}` ordered by `initDate`; optional filtering, sorting and paging |
+| `PUT` | `/products/{id}/prices/{currency}/{initDate}` | `200`, the price with its new value and/or end date (OAuth, `products:write`) |
+| `DELETE` | `/products/{id}/prices/{currency}/{initDate}` | `204` (OAuth, `products:write`) |
 
 ```bash
 curl -s -X POST localhost:8080/products -H 'Content-Type: application/json' \
@@ -85,6 +97,18 @@ curl -s 'localhost:8080/products/{id}/prices?date=2024-06-30'   # {"value":99.99
   implied by the request instead of added to every price.
 - `POST /products/{id}/prices` returns no `Location`: a price has no identity of its own, it is reached through
   its product and a date.
+- Update and delete (bonus): a price is identified by its currency and `initDate`, which are unique because periods
+  never overlap. `PUT /products/{id}/prices/{currency}/{initDate}` changes the value and/or the end date in one
+  atomic write that re-checks overlaps against the other prices; `DELETE` removes it. Both need an OAuth 2.0 token
+  (see [Authentication](#authentication)).
+- History filtering, sorting and paging (bonus): `GET /products/{id}/prices` accepts `from` and `to` (prices in force
+  in that window), `sort=initDate,asc|initDate,desc`, `page` (zero-based) and `size` (1 to 500). Without them the
+  response is exactly the statement's. The body never changes shape: paging goes in an `X-Total-Count` header and
+  RFC 8288 `Link` headers with `rel="prev"` and `rel="next"`.
+
+```bash
+curl -si 'localhost:8080/products/{id}/prices?from=2024-01-01&sort=initDate,desc&page=0&size=2'
+```
 
 ### Errors
 
@@ -107,6 +131,74 @@ Errors follow RFC 9457 (`application/problem+json`):
   ]
 }
 ```
+
+## Swagger UI
+
+The API is documented with Swagger UI at **http://localhost:8080/swagger-ui**. Every endpoint lists its parameters,
+request and response bodies with examples, and every error status it can return; requests can be sent from the page.
+
+The endpoints that change or delete prices are marked with a lock. To call them from Swagger UI:
+
+1. Click **Authorize**.
+2. Under `oauth2 (OAuth2, clientCredentials)` enter client id `products-writer`, client secret `products-writer-secret`
+   and tick the `products:write` scope.
+3. Click **Authorize**: Swagger UI gets the token from Keycloak and sends it on every protected call.
+
+The same description is available as a machine-readable document at `/q/openapi` (YAML, or JSON with
+`?format=json`) for client generation.
+
+## Authentication
+
+Service-to-service calls use **OAuth 2.0 client credentials**, the standard flow between microservices: a calling
+service authenticates with its own client id and secret against an authorization server, receives a short-lived JWT
+access token and sends it as `Authorization: Bearer <token>`. The API is a resource server: it validates the token's
+signature locally against the authorization server's public keys (fetched once and cached), so there is no call to
+the authorization server per request.
+
+The authorization server is **Keycloak**, started by `docker compose` with the `products` realm imported from
+[keycloak/products-realm.json](keycloak/products-realm.json). It defines two service clients:
+
+| Client | Secret | Scopes | Can |
+|---|---|---|---|
+| `products-writer` | `products-writer-secret` | `products:write` | change and delete prices |
+| `products-reader` | `products-reader-secret` | none | call protected endpoints and get `403` |
+
+These are local test credentials; a real deployment loads secrets from a vault and rotates them.
+
+```bash
+TOKEN=$(curl -s -d grant_type=client_credentials -d client_id=products-writer -d client_secret=products-writer-secret \
+  http://localhost:8180/realms/products/protocol/openid-connect/token | jq -r .access_token)
+
+curl -s -X PUT localhost:8080/products/{id}/prices/EUR/2024-01-01 -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"value":89.99,"endDate":"2024-03-31"}'
+```
+
+What is protected, and why:
+
+- `PUT` and `DELETE` on prices require a valid token with the `products:write` scope: `401` without a token,
+  `403` with a token that lacks the scope.
+- The four mandatory endpoints stay public by default, because the statement's automated tests call them without a
+  token. `PRODUCTS_AUTH_ALL=true` makes every `/products` call require a valid token, which is how it would run in
+  production. Health, metrics and Swagger UI stay open.
+- Authentication runs only where an endpoint asks for it. The Quarkus default authenticates every request up front,
+  which would run the security chain on every public request as well.
+
+## Observability
+
+- **Structured logs.** In production every log line is one JSON object (timestamp, level, logger, message, thread,
+  host and `requestId`), ready for a log shipper such as Loki, Elasticsearch or Datadog. Dev mode and tests print
+  plain text. Business events are logged at `INFO`: product created, price added, replaced, removed or rejected for
+  overlapping. Reads are not logged one by one; their volume is covered by metrics.
+- **Request ids.** Every request gets an `X-Request-Id` (the caller's, if it sends one, so a request can be followed
+  across services) that appears in its log lines and is echoed in the response.
+- **Metrics.** Prometheus format at `/q/metrics`: cache reads by result
+  (`products_cache_reads_total{result=hit|miss|error}`), cache write errors, circuit breaker state, and JVM memory,
+  GC and threads. Per-endpoint request timers (`http_server_requests_seconds`) are available with
+  `-Dquarkus.micrometer.binder.http-server.enabled=true` at build time; they are off by default because they
+  measured at about 18% more CPU per request, the largest single cost of the observability added.
+- **Logging API.** The code logs through JBoss Logging, the API Quarkus itself uses; Quarkus routes Log4j 2, SLF4J
+  and java.util.logging calls into the same log manager, so libraries using Log4j end up in the same JSON stream.
+  Using Log4j 2 directly as the backend is not supported by Quarkus and would bypass that.
 
 ## Design
 
@@ -265,18 +357,33 @@ left untouched. MongoDB and Redis are auxiliary containers, each capped at 0.5 C
 
 Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.md).
 
+## Bonus challenges
+
+| Challenge | Status | Where |
+|---|---|---|
+| Automated performance test | Done: k6 in `docker compose`, seeding, thresholds, one report per run, every experiment on its own branch | [Load test](#load-test), [perf/RESULTS.md](perf/RESULTS.md) |
+| Multiple currencies per price | Done: optional `currency` on writes and reads, one timeline per currency | [Changes and additions](#changes-and-additions-to-the-endpoints) |
+| Update or delete prices | Done: `PUT` and `DELETE` on `/products/{id}/prices/{currency}/{initDate}`, atomic overlap check | [Changes and additions](#changes-and-additions-to-the-endpoints) |
+| Basic or token authentication | Done: OAuth 2.0 client credentials with Keycloak, JWT validated by the API, scope `products:write` | [Authentication](#authentication) |
+| Swagger/OpenAPI documentation | Done: Swagger UI with examples, error codes and OAuth login | [Swagger UI](#swagger-ui) |
+| Scripts to seed test data | Done: `scripts/seed.sh`, and k6 seeds 1,000 products before every load run | [Load test](#load-test) |
+| Paging, sorting or filtering of the history | Done: `from`, `to`, `sort`, `page`, `size`, with `X-Total-Count` and `Link` headers | [Changes and additions](#changes-and-additions-to-the-endpoints) |
+
 ## Known limits
 
 - A MongoDB document is capped at 16 MB, about 150k embedded prices per product. Past that, the bucket pattern
   (one document per product and period) keeps the same queries.
-- Prices are immutable; there are no update or delete endpoints yet. "Updating" would mean closing the current
-  price and adding a new one.
+- The near cache measured in branch `experiment/06-near-cache` is the biggest single gain (+69% throughput) and is
+  not used, because it is not consistent across instances; see
+  [perf/RESULTS.md](perf/RESULTS.md#why-the-near-cache-was-not-adopted-it-does-not-scale-out).
+- The mandatory endpoints are public unless `PRODUCTS_AUTH_ALL=true`, so the statement's tests can call them.
+- Keycloak runs in dev mode with an embedded database, which is fine for the challenge and not for production.
 - MongoDB, capped at half a CPU, is the busiest container once the cache is on: writes always go there. It is the
   next thing to scale (a replica for reads that miss the cache, or a write-behind buffer for prices).
 - Absolute numbers in `perf/RESULTS.md` come from a 2 CPU machine where the containers compete for the host; the
   comparisons between runs hold, the k6 thresholds (`p95 < 50 ms`) are not met there.
-- No authentication.
-- The history is not paginated; a product's prices are returned in one response.
+- Paging of the history happens in memory over the aggregate, which is already read whole; it bounds the response,
+  not the read.
 
 ## Stack decision
 
@@ -309,14 +416,23 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
    variants in every metric.
 5. **Quarkus reactive** (Mutiny, reactive drivers) was measured last, because the reactive model deserved a
    second chance on a different framework. Without cache it tied with virtual threads; with Redis it was
-   consistently better, so it is the final choice:
+   consistently better, so it is the chosen model.
+6. **Review fixes** from a technical lead and an architect review (a CPU denial of service through huge numbers, a
+   stale cache after a failed write, missing timeouts) cost about 4% of throughput, all of it the circuit breaker.
+7. **A near cache** in the app was the biggest gain of all (+69% throughput) and was rejected: it cannot keep several
+   instances consistent, which matters more for prices than speed.
 
-| Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
-|---|---|---|---|---|---|
-| Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
-| Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
-| Quarkus 3, virtual threads | ~1,790 | ~161 ms | ~221 ms | 2.5 s | ~150 MB |
-| **Quarkus 3, reactive (Mutiny)** | **~1,980** | **~148 ms** | **~198 ms** | **2.5 s** | **~150 MB** |
+
+| Branch | Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
+|---|---|---|---|---|---|---|
+| `experiment/01-spring-webflux` | Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
+| `experiment/02-spring-mvc-virtual-threads` | Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
+| `experiment/03-quarkus-virtual-threads` | Quarkus 3, virtual threads | ~1,790 | ~161 ms | ~221 ms | 2.5 s | ~150 MB |
+| `experiment/04-quarkus-reactive` | **Quarkus 3, reactive (Mutiny)** | **~1,980** | **~148 ms** | **~198 ms** | **2.5 s** | **~150 MB** |
+| `experiment/05-review-fixes` | + fixes from the technical review | ~1,945 | ~152 ms | ~201 ms | 2.3 s | ~155 MB |
+| `experiment/06-near-cache` | + in-process cache in front of Redis (not adopted) | ~3,290 | ~130 ms | ~208 ms | 2.7 s | ~160 MB |
+
+Each branch is frozen at the code that was measured and can be run again with `docker compose up --build`.
 
 Reactive lost on Spring and won on Quarkus. The most likely reason is the layer underneath: Mutiny on Vert.x is
 thinner than Reactor on WebFlux. That is why the model was measured again instead of being ruled out.
@@ -327,13 +443,19 @@ thinner than Reactor on WebFlux. That is why the model was measured again instea
   health, MongoDB, Redis) is covered by official extensions; the gap would matter for a larger system.
 - **Reactive code is harder to read than imperative code**, and the application layer now depends on Mutiny
   through the `Uni` in its ports. The gain (about 10% in throughput and p99 with Redis) was judged worth it for a
-  challenge that puts performance first; the virtual-thread version stays on the branch `experiment/quarkus`.
+  challenge that puts performance first; the virtual-thread version stays on the branch
+  `experiment/03-quarkus-virtual-threads`.
 - **The event loop must never block.** Vert.x warns when it does; the tests and every load-test run were checked
   for those warnings and showed none. Any new library must have a non-blocking client.
 - **MongoDB instead of PostgreSQL.** An exclusion constraint would express the no-overlap rule just as well and
   more declaratively; MongoDB was preferred for the read path, where a product and its whole history are one lookup.
 - **Redis adds a container and a network hop.** It fails open behind a circuit breaker, so the API works
   the same without it.
+- **A shared cache instead of a faster local one.** The near cache would have served 69% more requests, but each
+  instance would answer from its own copy for up to its TTL after another instance changed a price. Scaling out
+  correctly comes first.
+- **Keycloak is a fifth container.** It adds memory (about 500 MB) and startup time to the compose stack, in exchange
+  for the standard microservice security model instead of credentials checked inside the API.
 
 The stack can still change cheaply: as described in [Architecture](#architecture), the move to Quarkus only
 touched the adapters and the wiring, and the move to reactive added the ports and use cases; the domain never
