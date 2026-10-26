@@ -72,6 +72,7 @@
 - No `Location` on `POST /products/{id}/prices`: a price has no identity of its own, it is addressed through the product and a date.
 - Health stays at `/actuator/health` (configured in Quarkus) so the compose healthcheck and existing tooling did not change; nothing else is exposed there.
 - The statement's four endpoints are never changed: the recruiter's automated tests call them. They live in their own resource (`ChallengeResource`) at the original paths, with exactly the specified behaviour, and appear first in Swagger as "Challenge endpoints"; the load test drives them.
+- Both resources only declare paths, validation and documentation, and delegate to one `ProductEndpoints` class: an earlier version had the challenge resource call the `/v1` resource, which validated every write twice.
 - Path versioning for everything else: the same API under `/v1` plus the improvements, so an incompatible change can ship as `/v2` beside it. The challenge resource delegates to the `/v1` one, so both answer the same way and there is no redirect or reroute.
 - Swagger is the complete API reference: the overview (rules, auth with test credentials, errors, paging, versioning) and the shared error responses live in `META-INF/openapi.yaml`, endpoint details in annotations, and a test checks both are published.
 - Update and delete identify a price by currency and `initDate`, unique because periods never overlap; there is no separate price id to keep in sync. Replacement is one `findOneAndUpdate` with an array filter that re-checks overlaps against the other prices.
@@ -88,7 +89,7 @@
 
 - Serial GC in the container: the app gets 1 CPU, where G1's concurrent threads only add overhead.
 - CDS archive created by a training run at image build (start, then a graceful stop that writes the archive): `AutoCreateSharedArchive` alone would only help from the second start of the same container.
-- Native image is not built: it would cut startup further but needs GraalVM in the build and a longer image build; the JVM image already starts in about 2.5 s.
+- Native image is not built: it would cut startup further but needs GraalVM in the build and a longer image build; the JVM image already starts in 4 to 5 s.
 - Quarkus sizes the event loops from the CPUs it sees (two for the 1 CPU container); no thread pool tuning is needed for request handling.
 
 ## Security
@@ -98,7 +99,8 @@
 - Scope-based authorization: `products:write` is required to change or delete prices; a reader client without it shows the `403` path.
 - The four mandatory endpoints stay public by default because the statement's automated tests call them without a token; `PRODUCTS_AUTH_ALL=true` requires a valid token on every `/products` call.
 - Authentication is lazy (`quarkus.http.auth.proactive=false`): the Quarkus default ran the security chain on every request, public ones included.
-- Tests use the mock authorization server from `quarkus-test-oidc-server` and sign their own tokens, so the real bearer-token path is tested without starting Keycloak.
+- SmallRye JWT validates the tokens instead of the Quarkus OIDC extension: a resource server only needs signature (JWKS), issuer, expiry and scopes; the OIDC extension, built for applications that also log users in, added work to every request.
+- Tests sign their own JWTs with a throwaway key pair in `src/test/resources`, so the real bearer-token path (401, 403, 200) is tested without starting Keycloak or a mock server.
 
 ## Observability
 
@@ -106,7 +108,7 @@
 - Business events (product created, price added, replaced, removed, rejected) are logged at INFO; reads are not logged individually, their volume belongs in metrics.
 - `X-Request-Id` is set by a Vert.x router handler, taken from the caller when present: cheaper than a JAX-RS filter pair and it covers every route.
 - JBoss Logging instead of Log4j 2 as the API: it is what Quarkus uses, and Quarkus bridges Log4j 2, SLF4J and JUL into the same log manager; Log4j 2 as a backend is not supported by Quarkus.
-- Prometheus metrics for the JVM, cache reads by result, cache write errors and the circuit breaker. Per-request HTTP timers are off by default: they cost about 18% CPU per request in the measurements, the largest single cost of the observability.
+- Prometheus metrics for the JVM, cache reads by result and cache write errors. Per-request HTTP timers are off by default: they cost about 18% CPU per request in the measurements, the largest single cost of the observability. Fault-tolerance metrics are off too, because they are recorded on every Redis call; the circuit breaker logs its state changes instead.
 
 ## Tests and load test
 

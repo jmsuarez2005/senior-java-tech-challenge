@@ -1,9 +1,5 @@
 package com.mango.products.adapters.in.web;
 
-import java.time.LocalDate;
-import java.util.Currency;
-import java.util.List;
-
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.enums.SchemaType;
 import org.eclipse.microprofile.openapi.annotations.enums.SecuritySchemeType;
@@ -23,23 +19,11 @@ import org.jboss.resteasy.reactive.ResponseStatus;
 import com.mango.products.adapters.in.web.dto.AddPriceRequest;
 import com.mango.products.adapters.in.web.dto.ApiDefaults;
 import com.mango.products.adapters.in.web.dto.CreateProductRequest;
-import com.mango.products.adapters.in.web.dto.HistoryQuery;
 import com.mango.products.adapters.in.web.dto.PriceHistoryResponse;
 import com.mango.products.adapters.in.web.dto.PriceResponse;
 import com.mango.products.adapters.in.web.dto.PriceValueResponse;
 import com.mango.products.adapters.in.web.dto.ProductResponse;
 import com.mango.products.adapters.in.web.dto.ReplacePriceRequest;
-import com.mango.products.application.AddPrice;
-import com.mango.products.application.CreateProduct;
-import com.mango.products.application.FindPriceInForce;
-import com.mango.products.application.FindProduct;
-import com.mango.products.application.RemovePrice;
-import com.mango.products.application.ReplacePrice;
-import com.mango.products.domain.DateRange;
-import com.mango.products.domain.Money;
-import com.mango.products.domain.Price;
-import com.mango.products.domain.Product;
-import com.mango.products.domain.ProductId;
 
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
@@ -74,21 +58,10 @@ public class ProductResource {
 	private static final String CURRENCY = "ISO 4217 currency code";
 	private static final String JSON = MediaType.APPLICATION_JSON;
 
-	private final CreateProduct createProduct;
-	private final FindProduct findProduct;
-	private final AddPrice addPrice;
-	private final FindPriceInForce findPriceInForce;
-	private final ReplacePrice replacePrice;
-	private final RemovePrice removePrice;
+	private final ProductEndpoints endpoints;
 
-	public ProductResource(CreateProduct createProduct, FindProduct findProduct, AddPrice addPrice,
-			FindPriceInForce findPriceInForce, ReplacePrice replacePrice, RemovePrice removePrice) {
-		this.createProduct = createProduct;
-		this.findProduct = findProduct;
-		this.addPrice = addPrice;
-		this.findPriceInForce = findPriceInForce;
-		this.replacePrice = replacePrice;
-		this.removePrice = removePrice;
+	public ProductResource(ProductEndpoints endpoints) {
+		this.endpoints = endpoints;
 	}
 
 	@POST
@@ -98,10 +71,7 @@ public class ProductResource {
 			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
 	@APIResponse(responseCode = "400", ref = "BadRequest")
 	public Uni<Response> create(@Valid CreateProductRequest request, @Context UriInfo uri) {
-		return createProduct.execute(request.name(), request.description())
-				.map(product -> Response.created(uri.getAbsolutePathBuilder().path(product.id().value()).build())
-						.entity(ProductResponse.from(product))
-						.build());
+		return endpoints.create(request, uri);
 	}
 
 	@GET
@@ -111,7 +81,7 @@ public class ProductResource {
 			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
 	@APIResponse(responseCode = "404", ref = "NotFound")
 	public Uni<ProductResponse> get(@Parameter(description = ID) @PathParam("id") String id) {
-		return findProduct.execute(new ProductId(id)).map(ProductResponse::from);
+		return endpoints.get(id);
 	}
 
 	@POST
@@ -128,9 +98,7 @@ public class ProductResource {
 	@APIResponse(responseCode = "409", ref = "Conflict")
 	public Uni<PriceResponse> addPrice(@Parameter(description = ID) @PathParam("id") String id,
 			@Valid AddPriceRequest request) {
-		return Uni.createFrom().item(request::toPrice)
-				.chain(price -> addPrice.execute(new ProductId(id), price))
-				.map(PriceResponse::from);
+		return endpoints.addPrice(id, request);
 	}
 
 	@GET
@@ -158,26 +126,7 @@ public class ProductResource {
 			@Parameter(description = "Zero-based page number") @QueryParam("page") @DefaultValue("0") int page,
 			@Parameter(description = "Page size, 1 to 500; leave out to get the whole history") @QueryParam("size") @DefaultValue("0") int size,
 			@Context UriInfo uri) {
-		if (date != null) {
-			return price(id, date, currency).map(value -> Response.ok(value).build());
-		}
-		return Uni.createFrom().item(() -> RequestParams.historyQuery(currency, from, to, sort, page, size))
-				.chain(query -> findProduct.execute(new ProductId(id)).map(product -> history(product, query, uri)));
-	}
-
-	private static Response history(Product product, HistoryQuery query, UriInfo uri) {
-		List<Price> matching = query.matching(product);
-		Response.ResponseBuilder response = Response.ok(PriceHistoryResponse.from(product, query.pageOf(matching)));
-		if (query.paginated()) {
-			response.header("X-Total-Count", matching.size());
-			if (query.page() > 0) {
-				response.link(uri.getRequestUriBuilder().replaceQueryParam("page", query.page() - 1).build(), "prev");
-			}
-			if (query.hasNextPage(matching.size())) {
-				response.link(uri.getRequestUriBuilder().replaceQueryParam("page", query.page() + 1).build(), "next");
-			}
-		}
-		return response.build();
+		return endpoints.prices(id, date, currency, from, to, sort, page, size, uri);
 	}
 
 	@GET
@@ -191,9 +140,7 @@ public class ProductResource {
 	public Uni<PriceValueResponse> price(@Parameter(description = ID) @PathParam("id") String id,
 			@Parameter(description = "Day (yyyy-MM-dd)", required = true, example = "2024-04-15") @QueryParam("date") String date,
 			@Parameter(description = CURRENCY) @QueryParam("currency") @DefaultValue(ApiDefaults.CURRENCY_CODE) String currency) {
-		return Uni.createFrom().item(() -> RequestParams.date(date))
-				.chain(day -> findPriceInForce.execute(new ProductId(id), day, RequestParams.currency(currency)))
-				.map(PriceValueResponse::from);
+		return endpoints.priceInForce(id, date, currency);
 	}
 
 	@PUT
@@ -214,13 +161,7 @@ public class ProductResource {
 			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
 			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate,
 			@Valid ReplacePriceRequest request) {
-		return Uni.createFrom().item(() -> {
-			Currency code = RequestParams.currency(currency);
-			LocalDate start = RequestParams.requiredDate("initDate", initDate);
-			return new Price(Money.of(request.value(), code), new DateRange(start, request.endDate()));
-		})
-				.chain(price -> replacePrice.execute(new ProductId(id), price))
-				.map(PriceResponse::from);
+		return endpoints.replacePrice(id, currency, initDate, request);
 	}
 
 	@DELETE
@@ -237,8 +178,7 @@ public class ProductResource {
 	public Uni<Void> removePrice(@Parameter(description = ID) @PathParam("id") String id,
 			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
 			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate) {
-		return Uni.createFrom().item(() -> RequestParams.currency(currency))
-				.chain(code -> removePrice.execute(new ProductId(id), code, RequestParams.requiredDate("initDate", initDate)));
+		return endpoints.removePrice(id, currency, initDate);
 	}
 
 }

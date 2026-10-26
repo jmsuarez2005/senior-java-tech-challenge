@@ -27,12 +27,11 @@ dependencies {
 	implementation 'io.quarkus:quarkus-smallrye-openapi'
 	implementation 'io.quarkus:quarkus-smallrye-fault-tolerance'
 	implementation 'io.quarkus:quarkus-logging-json'
-	implementation 'io.quarkus:quarkus-oidc'
+	implementation 'io.quarkus:quarkus-smallrye-jwt'
 	implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
 
 	testImplementation 'io.quarkus:quarkus-junit5'
 	testImplementation 'io.rest-assured:rest-assured'
-	testImplementation 'io.quarkus:quarkus-test-oidc-server'
 	testImplementation 'io.quarkus:quarkus-smallrye-jwt-build'
 	testImplementation 'org.assertj:assertj-core:3.27.7'
 	testImplementation 'com.tngtech.archunit:archunit-junit5:1.5.1'

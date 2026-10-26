@@ -21,9 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.oidc.server.OidcWiremockTestResource;
 import io.restassured.RestAssured;
 import io.restassured.config.JsonConfig;
 import io.restassured.http.ContentType;
@@ -34,7 +32,6 @@ import io.restassured.specification.RequestSpecification;
 import io.smallrye.jwt.build.Jwt;
 
 @QuarkusTest
-@QuarkusTestResource(OidcWiremockTestResource.class)
 class ProductApiIT {
 
 	private static final String WRITE_SCOPE = "products:write";
@@ -366,7 +363,7 @@ class ProductApiIT {
 
 	private static RequestSpecification authorized(String scope) {
 		String token = Jwt.preferredUserName("products-writer")
-				.issuer("https://server.example.com")
+				.issuer("https://products.test")
 				.claim("scope", scope)
 				.sign();
 		return json().auth().oauth2(token);
