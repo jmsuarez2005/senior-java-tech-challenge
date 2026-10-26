@@ -1,7 +1,12 @@
 # Products API
 
+> **Experiment branch 4 of 6: `experiment/04-quarkus-reactive`.** Quarkus 3 reactive (Mutiny on the Vert.x event loop), reactive MongoDB and Redis clients.
+> The code is frozen as it was measured; the comparison of all branches is in the README on `main`.
+> Run it in its measured configuration with `PRODUCTS_CACHE_ENABLED=true docker compose --profile cache up --build`. Swagger UI: `http://localhost:8080/swagger-ui`;
+> the API document (SmallRye OpenAPI): `http://localhost:8080/q/openapi`.
+
 Products with historical prices. A product can have many prices over time, but only one price in force per day
-and currency. Built with Quarkus on Java 21 virtual threads and MongoDB, with an optional Redis cache.
+and currency. Built with Java 21 on the Quarkus reactive stack (Mutiny on the Vert.x event loop) and MongoDB, with a Redis cache.
 
 The original statement is in [SPEC.md](SPEC.md). Every design decision, one line each, is in
 [docs/DECISIONS.md](docs/DECISIONS.md). Why this stack was chosen is explained at the end, in
