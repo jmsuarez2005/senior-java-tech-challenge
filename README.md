@@ -168,15 +168,15 @@ Errors follow RFC 9457 (`application/problem+json`):
 
 The API is documented with Swagger UI at **http://localhost:8080/swagger-ui**, and that page is the complete
 reference. Endpoints come in two groups: **Challenge endpoints**, the statement's four, unchanged, and **Products**,
-the versioned `/v1` API with the improvements. The overview at the top explains the rules (closed intervals, currencies and decimals, no overlap),
-versioning, authentication with the test credentials, the error format and paging; every endpoint lists its
-parameters, request and response bodies with examples, response headers (`Location`, `X-Total-Count`, `Link`) and
+the versioned `/v1` API with the improvements. The overview at the top explains the rules (closed intervals,
+currencies and decimals, no overlap), versioning, authentication with the test credentials, the error format and
+paging; every endpoint lists its parameters, request and response bodies with examples, response headers (`Location`, `X-Total-Count`, `Link`) and
 every error it can return, with the `application/problem+json` body and an example. Requests can be sent from the
 page.
 
 The overview, the shared error responses and their schemas are written in
 [src/main/resources/META-INF/openapi.yaml](src/main/resources/META-INF/openapi.yaml); Quarkus merges them with what
-the annotations on the resource describe.
+the annotations on the two resources describe.
 
 The endpoints that change or delete prices are marked with a lock. To call them from Swagger UI:
 
@@ -198,8 +198,8 @@ and expiry, and reads its scopes, so there is no call to the authorization serve
 
 The validation uses **SmallRye JWT**, which does exactly that and nothing else. The full Quarkus OIDC extension was
 used first; it is built for applications that also log users in, and it added work to every request, protected or
-not. With SmallRye JWT and authentication only on the endpoints that require it, public requests pay nothing for
-security (see [perf/RESULTS.md](perf/RESULTS.md)).
+not. With SmallRye JWT and authentication only on the endpoints that require it, public requests never run the
+security chain (see [perf/RESULTS.md](perf/RESULTS.md)).
 
 The authorization server is **Keycloak**, started by `docker compose` with the `products` realm imported from
 [keycloak/products-realm.json](keycloak/products-realm.json). It defines two service clients:
@@ -224,8 +224,8 @@ What is protected, and why:
 - `PUT` and `DELETE` on prices require a valid token with the `products:write` scope: `401` without a token,
   `403` with a token that lacks the scope.
 - The four mandatory endpoints stay public by default, because the statement's automated tests call them without a
-  token. `PRODUCTS_AUTH_ALL=true` makes every call under `/v1/products` and `/products` require a valid token, which is how it would run in
-  production. Health, metrics and Swagger UI stay open.
+  token. `PRODUCTS_AUTH_ALL=true` makes every call under `/v1/products` and `/products` require a valid token,
+  which is how it would run in production. Health, metrics and Swagger UI stay open.
 - Authentication runs only where an endpoint asks for it. The Quarkus default authenticates every request up front,
   which would run the security chain on every public request as well.
 
@@ -240,9 +240,10 @@ What is protected, and why:
 - **Metrics.** Prometheus format at `/q/metrics`: Redis reads by result
   (`products_cache_reads_total{result=hit|miss|error}`, counted when the local cache misses, so a read served from
   memory does not appear), cache write errors, and JVM memory, GC and threads. The circuit breaker logs its state
-  changes instead of recording metrics on every Redis call. Per-endpoint request timers (`http_server_requests_seconds`) are available with
-  `-Dquarkus.micrometer.binder.http-server.enabled=true` at build time; they are off by default because they
-  measured at about 18% more CPU per request, the largest single cost of the observability added.
+  changes instead of recording metrics on every Redis call. Per-endpoint request timers
+  (`http_server_requests_seconds`) are available with `-Dquarkus.micrometer.binder.http-server.enabled=true` at
+  build time; they are off by default because they measured at about 18% more CPU per request, the largest single
+  cost of the observability added.
 - **Logging API.** The code logs through JBoss Logging, the API Quarkus itself uses; Quarkus routes Log4j 2, SLF4J
   and java.util.logging calls into the same log manager, so libraries using Log4j end up in the same JSON stream.
   Using Log4j 2 directly as the backend is not supported by Quarkus and would bypass that.
@@ -338,10 +339,11 @@ refresh it at once, with the same version rule as Redis, so an older copy never 
 
 It is the best configuration measured, and it is what `main` runs by default:
 
-- **Same load, lower latency at every percentile.** At a fixed 450 requests per second, against the same code with
-  Redis only: median 2.7 ms against 6.7 ms, p95 43 ms against 104 ms, p99 102 ms against 227 ms (averages of two
-  runs each). Across all seven configurations measured the same way, it is the only one that stayed under the
-  statement's load-test threshold, p95 under 50 ms, in both rounds.
+- **Same load, lower latency at every percentile.** At a fixed 450 requests per second, branch 06 (this cache in
+  front of Redis) against branch 05 (Redis only): median 2.3 ms against 4.4 ms, p95 39 ms against 65 ms, p99 92 ms
+  against 159 ms, averages of two rounds. Of the six experiment branches it is the only one under the statement's
+  load-test threshold, p95 under 50 ms, in both rounds. `main`, which adds OAuth, observability and the new
+  endpoints, stays under it too: p95 49 ms, p99 152 ms.
 - **More requests with less CPU.** In the closed-loop scenario of the statement it served 26% more requests with
   25% less app CPU per request (69% more in branch 06, measured on a healthy machine).
 - One closed-loop result looks worse and is not: p99 rose about 30% there because the app answered faster, so more
@@ -438,11 +440,13 @@ what makes it fast, and any rule engine can be added without touching it.
 Startup and footprint:
 
 - Quarkus does dependency injection and configuration at build time; the app starts in 4 to 5 s inside its
-  1 CPU container and uses about 150 MB under load.
+  1 CPU container and uses about 190 MB under load (about 150 MB on the experiment branches without the local
+  cache, OAuth and observability).
 - A CDS archive is created at image build with a training run (start, then a graceful stop), so the first start in
   a fresh container already loads classes from it.
 - Serial GC (the app has a single CPU) and `MaxRAMPercentage=75`.
-- WARN logging, no per-request log, and nothing but health under `/actuator`.
+- Libraries log at WARN and the app at INFO for business events only; no line per request, and nothing but health
+  under `/actuator`.
 - A native image is possible with Quarkus but not built: it needs GraalVM in the build, and the JVM image already
   starts fast enough for this workload.
 
@@ -527,7 +531,9 @@ usage, with the app limited to 1 CPU and 1 GB. The stack was therefore settled b
 | Framework | Quarkus 3 | Build-time dependency injection: fastest startup and lowest memory of the options measured. |
 | Concurrency | Reactive, Mutiny on the Vert.x event loop | Non-blocking end to end; with Redis it beat virtual threads on throughput and tail latency. |
 | Database | MongoDB | A product and all its prices are one document: every read is one lookup by `_id`, and the no-overlap rule is one atomic update. |
-| Cache | Redis | Takes reads off MongoDB, which only gets half a CPU; shared, so it stays correct with several app instances. |
+| Cache | Local Caffeine cache (5 s) in front of Redis (1 min) | Redis takes reads off MongoDB, which only gets half a CPU, and is shared by every instance; the local cache removes the network hop and the decoding for hot products. Best configuration measured; the local layer is switched off for several instances. |
+| Security | OAuth 2.0 client credentials, Keycloak, SmallRye JWT | The standard between microservices; the API validates tokens locally, with no call per request. |
+| Observability | JSON logs with request ids, Micrometer and Prometheus | Ready for a log shipper and a scraper; per-request timers off because of their CPU cost. |
 | Load test | k6 | Scripted scenarios, thresholds and a JSON report, in a small container. |
 
 ### How it was decided
@@ -572,8 +578,9 @@ on where it exists). Averages of the two rounds:
 The local cache (branch 06) is the best configuration at every percentile, with the least CPU per request, in both
 rounds, and the only one under the statement's p95 threshold of 50 ms in both. `main` runs that same configuration
 plus the features the challenge asks for, which cost about 10% more CPU per request than branch 06 measured in the
-same session; its p95 stays under 50 ms in both rounds (50 and 49 ms), its tail is longer (p99 127 and 178 ms). Each branch is frozen at the measured code and can be run again with
-`docker compose up --build`; the raw runs are in [perf/RESULTS.md](perf/RESULTS.md).
+same session; its p95 stays under 50 ms in both rounds (50 and 49 ms), its tail is longer (p99 127 and 178 ms).
+Each branch is frozen at the measured code, with a note at the top of its README on how to run it and where its
+Swagger UI is; the raw runs are in [perf/RESULTS.md](perf/RESULTS.md).
 
 The fixed rate changed one earlier conclusion. In the closed loop (each user waits for its answer before sending the
 next request), Spring MVC on virtual threads served more requests than WebFlux. Under a fixed 450 requests per

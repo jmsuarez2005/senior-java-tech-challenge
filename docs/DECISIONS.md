@@ -10,7 +10,7 @@
 - Package root `com.mango.products`: kept from the provided scaffold.
 
 - Every experiment has its own branch (`experiment/01-...` to `experiment/06-...`) frozen at the measured code, so any row of `perf/RESULTS.md` can be run again; `main` carries the chosen design.
-- The in-process near cache (branch 06) is on `main` and on by default: it was the best result measured (+69% throughput in branch 06, +26% on `main`) and the challenge runs one instance. At a fixed arrival rate it is faster at every percentile (p99 -55%) and the only setup under p95 50 ms; the higher p99 seen in the closed loop came from more writes per second queueing in MongoDB. Its price is consistency across instances (each serves its own copy for up to 5 s after a change made elsewhere); that is documented with pros and cons, and `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off for distributed deployments.
+- The in-process near cache (branch 06) is on `main` and on by default: it was the best result measured (+69% throughput in branch 06, +26% on `main`) and the challenge runs one instance. At a fixed 450 req/s it is faster at every percentile than Redis alone (p95 39 against 65 ms, p99 92 against 159 ms) and the only experiment branch under p95 50 ms in both rounds; the higher p99 seen in the closed loop came from more writes per second queueing in MongoDB. Its price is consistency across instances (each serves its own copy for up to 5 s after a change made elsewhere); that is documented with pros and cons, and `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off for distributed deployments.
 - Every configuration was compared again at one fixed arrival rate, in one session: the closed-loop ranking had placed Spring MVC with virtual threads above WebFlux, but at a fixed 450 req/s it saturated (k6 dropped about 2,300 requests it could not send in time, p99 above one second) while WebFlux did not. The local cache won under both models.
 - The load test has an open-model mode (`RATE=n`, constant arrival rate) next to the statement's closed loop: comparing configurations at the same load separates a faster component from the extra queueing its speed causes elsewhere.
 
@@ -77,7 +77,7 @@
 - Swagger is the complete API reference: the overview (rules, auth with test credentials, errors, paging, versioning) and the shared error responses live in `META-INF/openapi.yaml`, endpoint details in annotations, and a test checks both are published.
 - Update and delete identify a price by currency and `initDate`, unique because periods never overlap; there is no separate price id to keep in sync. Replacement is one `findOneAndUpdate` with an array filter that re-checks overlaps against the other prices.
 - History filtering, sorting and paging run in memory on the aggregate already read whole; the body keeps the statement's shape and paging travels in `X-Total-Count` and RFC 8288 `Link` headers, so default clients see no change.
-- Swagger UI is the documentation entry point, with the OAuth client-credentials scheme declared so protected calls can be made from the page; the automatic security scheme Quarkus adds for OIDC is turned off because it duplicated it.
+- Swagger UI is the documentation entry point, with the OAuth client-credentials scheme declared so protected calls can be made from the page; the security scheme Quarkus adds automatically for token authentication is turned off because it duplicated it.
 
 ## Validation
 
