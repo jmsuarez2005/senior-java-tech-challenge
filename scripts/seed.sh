@@ -12,9 +12,9 @@ post() {
 }
 
 for ((n = 1; n <= PRODUCTS; n++)); do
-  id=$(post /products "{\"name\":\"Product $n\",\"description\":\"Seed data\"}" | sed -E 's/.*"id":"([^"]+)".*/\1/')
+  id=$(post /v1/products "{\"name\":\"Product $n\",\"description\":\"Seed data\"}" | sed -E 's/.*"id":"([^"]+)".*/\1/')
   for ((year = 2020; year < 2020 + PRICES; year++)); do
-    post "/products/$id/prices" "{\"value\":$((10 + n % 90)).99,\"initDate\":\"$year-01-01\",\"endDate\":\"$year-12-31\"}" > /dev/null
+    post "/v1/products/$id/prices" "{\"value\":$((10 + n % 90)).99,\"initDate\":\"$year-01-01\",\"endDate\":\"$year-12-31\"}" > /dev/null
   done
   echo "$id"
 done

@@ -1,0 +1,131 @@
+openapi: 3.1.0
+info:
+  title: Products API
+  version: "1.0"
+  description: |
+    Products with historical prices. A product can have many prices over time, but only **one price in force per day
+    and currency**.
+
+    ## Versioning
+    Every endpoint lives under `/v1`. The challenge's four mandatory endpoints are also served exactly as specified,
+    without the version prefix (`POST /products`, `POST /products/{id}/prices`, `GET /products/{id}/prices?date=` and
+    `GET /products/{id}/prices`), because its automated tests call them there. New clients should use `/v1`; the
+    reasons for each change are in the project README.
+
+    ## Rules
+    - **Validity is a closed interval:** `[initDate, endDate]` includes both days. A price ending on `2024-06-30` is
+      still the price on that day, so a price starting on the day another one ends overlaps it.
+    - `endDate` may be `null`, meaning "until further notice". `initDate` must be strictly before `endDate`.
+    - Two prices of the same product and currency can never overlap; each currency has its own timeline.
+    - `value` must be positive and cannot have more decimals than its currency allows (`9.999` EUR or `100.5` JPY are
+      rejected, never rounded). Amounts are limited to 18 digits in the currency's minor unit.
+    - `currency` is an ISO 4217 code and defaults to `EUR` everywhere.
+    - A price has no id of its own: it is identified by its product, currency and `initDate`.
+
+    ## Authentication
+    Changing or deleting a price requires an **OAuth 2.0 client-credentials** token with the `products:write` scope,
+    issued by the bundled Keycloak. Click **Authorize**, choose `oauth2`, and use:
+
+    | Client id | Client secret | Scope | Result |
+    |---|---|---|---|
+    | `products-writer` | `products-writer-secret` | `products:write` | can change and delete prices |
+    | `products-reader` | `products-reader-secret` | none | gets `403` on protected endpoints |
+
+    These are local test credentials. Without a token the protected endpoints answer `401`. The other endpoints are
+    public by default; with `PRODUCTS_AUTH_ALL=true` every call needs a valid token.
+
+    From a terminal:
+    ```
+    curl -d grant_type=client_credentials -d client_id=products-writer -d client_secret=products-writer-secret \
+      http://localhost:8180/realms/products/protocol/openid-connect/token
+    ```
+
+    ## Errors
+    Every error is an RFC 9457 problem (`application/problem+json`) with `title`, `status`, `detail` and `instance`.
+    Validation errors add `errors`, one entry per offending field, all reported at once.
+
+    ## Paging the history
+    `GET /v1/products/{id}/prices` accepts `from`, `to`, `sort`, `page` and `size`. The body never changes shape:
+    the total goes in `X-Total-Count` and the neighbouring pages in RFC 8288 `Link` headers.
+
+    ## Tracing
+    Every response carries an `X-Request-Id`. Send your own to find a request in the logs and across services.
+tags:
+  - name: Products
+    description: Products and their price history
+components:
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details
+      properties:
+        title:
+          type: string
+          examples: [Bad Request]
+        status:
+          type: integer
+          examples: [400]
+        detail:
+          type: string
+          examples: [Request validation failed]
+        instance:
+          type: string
+          description: Path of the request that failed
+          examples: [/v1/products/65f0c0ffee0000000000beef/prices]
+        errors:
+          type: array
+          description: Present on validation errors, one entry per offending field
+          items:
+            $ref: '#/components/schemas/FieldViolation'
+    FieldViolation:
+      type: object
+      properties:
+        field:
+          type: string
+          examples: [endDate]
+        message:
+          type: string
+          examples: [must be after initDate and not after 9999-12-31]
+  responses:
+    BadRequest:
+      description: Invalid body or parameters; every offending field is listed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Bad Request
+            status: 400
+            detail: Request validation failed
+            instance: /v1/products/65f0c0ffee0000000000beef/prices
+            errors:
+              - field: value
+                message: must have at most 2 decimals for EUR
+              - field: endDate
+                message: must be after initDate and not after 9999-12-31
+    Unauthorized:
+      description: Missing or invalid token
+    Forbidden:
+      description: The token does not carry the products:write scope
+    NotFound:
+      description: Unknown product, or no price matching the request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Not Found
+            status: 404
+            detail: Product 65f0c0ffee0000000000beef has no EUR price on 2024-07-01
+            instance: /v1/products/65f0c0ffee0000000000beef/price
+    Conflict:
+      description: The price overlaps another price of the same product and currency
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Conflict
+            status: 409
+            detail: Product 65f0c0ffee0000000000beef already has a EUR price overlapping [2024-06-30, 2024-12-31]
+            instance: /v1/products/65f0c0ffee0000000000beef/prices

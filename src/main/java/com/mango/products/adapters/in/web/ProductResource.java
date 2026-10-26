@@ -1,12 +1,15 @@
 package com.mango.products.adapters.in.web;
 
-import java.net.URI;
 import java.time.LocalDate;
 import java.util.Currency;
 import java.util.List;
 
 import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.enums.SchemaType;
 import org.eclipse.microprofile.openapi.annotations.enums.SecuritySchemeType;
+import org.eclipse.microprofile.openapi.annotations.headers.Header;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.security.OAuthFlow;
@@ -56,15 +59,20 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 
-@Path("/products")
+@Path("/v1/products")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Tag(name = "Products", description = "Products and their price history")
 @SecurityScheme(securitySchemeName = Scopes.SCHEME, type = SecuritySchemeType.OAUTH2,
-		description = "OAuth 2.0 client credentials against the bundled Keycloak (see README)",
+		description = "OAuth 2.0 client credentials against the bundled Keycloak. Use client products-writer with secret "
+				+ "products-writer-secret and the products:write scope.",
 		flows = @OAuthFlows(clientCredentials = @OAuthFlow(tokenUrl = Scopes.TOKEN_URL,
 				scopes = @OAuthScope(name = Scopes.WRITE, description = "Create, change and delete prices"))))
 public class ProductResource {
+
+	private static final String ID = "Product id, as returned when the product was created";
+	private static final String CURRENCY = "ISO 4217 currency code";
+	private static final String JSON = MediaType.APPLICATION_JSON;
 
 	private final CreateProduct createProduct;
 	private final FindProduct findProduct;
@@ -84,21 +92,25 @@ public class ProductResource {
 	}
 
 	@POST
-	@Operation(summary = "Create a product")
-	@APIResponse(responseCode = "201", description = "Created; Location points to the new product")
-	@APIResponse(responseCode = "400", description = "Invalid name or description")
-	public Uni<Response> create(@Valid CreateProductRequest request) {
+	@Operation(summary = "Create a product", description = "Creates a product without prices.")
+	@APIResponse(responseCode = "201", description = "Product created",
+			headers = @Header(name = "Location", description = "URL of the new product", schema = @Schema(type = SchemaType.STRING)),
+			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
+	@APIResponse(responseCode = "400", ref = "BadRequest")
+	public Uni<Response> create(@Valid CreateProductRequest request, @Context UriInfo uri) {
 		return createProduct.execute(request.name(), request.description())
-				.map(product -> Response.created(URI.create("/products/" + product.id()))
+				.map(product -> Response.created(uri.getAbsolutePathBuilder().path(product.id().value()).build())
 						.entity(ProductResponse.from(product))
 						.build());
 	}
 
 	@GET
 	@Path("/{id}")
-	@Operation(summary = "Get a product")
-	@APIResponse(responseCode = "404", description = "Unknown product")
-	public Uni<ProductResponse> get(@PathParam("id") String id) {
+	@Operation(summary = "Get a product", description = "Returns the product without its prices.")
+	@APIResponse(responseCode = "200", description = "The product",
+			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
+	@APIResponse(responseCode = "404", ref = "NotFound")
+	public Uni<ProductResponse> get(@Parameter(description = ID) @PathParam("id") String id) {
 		return findProduct.execute(new ProductId(id)).map(ProductResponse::from);
 	}
 
@@ -106,12 +118,16 @@ public class ProductResource {
 	@Path("/{id}/prices")
 	@ResponseStatus(201)
 	@Operation(summary = "Add a price",
-			description = "Validity is a closed interval: both initDate and endDate are included. "
-					+ "Rejected if it overlaps another price of the same product and currency.")
-	@APIResponse(responseCode = "400", description = "Invalid value or dates")
-	@APIResponse(responseCode = "404", description = "Unknown product")
-	@APIResponse(responseCode = "409", description = "Overlaps an existing price in the same currency")
-	public Uni<PriceResponse> addPrice(@PathParam("id") String id, @Valid AddPriceRequest request) {
+			description = "Validity is a closed interval: both initDate and endDate are included, and a null endDate means "
+					+ "until further notice. Rejected if it overlaps another price of the same product and currency, "
+					+ "even by a single day.")
+	@APIResponse(responseCode = "201", description = "Price added",
+			content = @Content(mediaType = JSON, schema = @Schema(implementation = PriceResponse.class)))
+	@APIResponse(responseCode = "400", ref = "BadRequest")
+	@APIResponse(responseCode = "404", ref = "NotFound")
+	@APIResponse(responseCode = "409", ref = "Conflict")
+	public Uni<PriceResponse> addPrice(@Parameter(description = ID) @PathParam("id") String id,
+			@Valid AddPriceRequest request) {
 		return Uni.createFrom().item(request::toPrice)
 				.chain(price -> addPrice.execute(new ProductId(id), price))
 				.map(PriceResponse::from);
@@ -119,19 +135,28 @@ public class ProductResource {
 
 	@GET
 	@Path("/{id}/prices")
-	@Operation(summary = "Get the price history, or the price in force when date is given",
-			description = "Without date: prices in one currency, filtered, sorted and optionally paged; the body keeps the "
-					+ "statement's shape and paging goes in the X-Total-Count and Link headers. With date: {\"value\": ...}, "
-					+ "kept for compatibility; GET /products/{id}/price is the preferred form for a single price.")
-	@APIResponse(responseCode = "400", description = "Invalid date, currency, window, sort or paging")
-	@APIResponse(responseCode = "404", description = "Unknown product or no price on that date")
-	public Uni<Response> prices(@PathParam("id") String id, @QueryParam("date") String date,
-			@Parameter(description = "ISO 4217 code") @QueryParam("currency") @DefaultValue(ApiDefaults.CURRENCY_CODE) String currency,
-			@Parameter(description = "Only prices in force on or after this day") @QueryParam("from") String from,
-			@Parameter(description = "Only prices in force on or before this day") @QueryParam("to") String to,
+	@Operation(summary = "Get the price history, or the price in force on a date",
+			description = "Without `date`: the prices in one currency, optionally filtered by a window, sorted and paged. "
+					+ "The body keeps the same shape with or without paging; paging travels in the `X-Total-Count` and "
+					+ "`Link` headers. With `date`: `{\"value\": ...}`, kept for compatibility with the statement; "
+					+ "`GET /v1/products/{id}/price` is the preferred form for a single price.")
+	@APIResponse(responseCode = "200", description = "The history, or the price in force when date is given",
+			headers = {
+					@Header(name = "X-Total-Count", description = "Prices matching the filters, when paging", schema = @Schema(type = SchemaType.INTEGER)),
+					@Header(name = "Link", description = "RFC 8288 links with rel=\"prev\" and rel=\"next\", when paging", schema = @Schema(type = SchemaType.STRING)) },
+			content = @Content(mediaType = JSON,
+					schema = @Schema(oneOf = { PriceHistoryResponse.class, PriceValueResponse.class })))
+	@APIResponse(responseCode = "400", ref = "BadRequest")
+	@APIResponse(responseCode = "404", ref = "NotFound")
+	public Uni<Response> prices(@Parameter(description = ID) @PathParam("id") String id,
+			@Parameter(description = "Day to get the price in force for (yyyy-MM-dd); switches the response to {value}",
+					example = "2024-04-15") @QueryParam("date") String date,
+			@Parameter(description = CURRENCY) @QueryParam("currency") @DefaultValue(ApiDefaults.CURRENCY_CODE) String currency,
+			@Parameter(description = "Only prices in force on or after this day (yyyy-MM-dd)") @QueryParam("from") String from,
+			@Parameter(description = "Only prices in force on or before this day (yyyy-MM-dd)") @QueryParam("to") String to,
 			@Parameter(description = "initDate,asc or initDate,desc") @QueryParam("sort") @DefaultValue("initDate,asc") String sort,
 			@Parameter(description = "Zero-based page number") @QueryParam("page") @DefaultValue("0") int page,
-			@Parameter(description = "Page size (1 to 500); omit to get the whole history") @QueryParam("size") @DefaultValue("0") int size,
+			@Parameter(description = "Page size, 1 to 500; leave out to get the whole history") @QueryParam("size") @DefaultValue("0") int size,
 			@Context UriInfo uri) {
 		if (date != null) {
 			return price(id, date, currency).map(value -> Response.ok(value).build());
@@ -155,21 +180,40 @@ public class ProductResource {
 		return response.build();
 	}
 
+	@GET
+	@Path("/{id}/price")
+	@Operation(summary = "Get the price in force on a date",
+			description = "The single price whose closed validity period contains the day, in the given currency.")
+	@APIResponse(responseCode = "200", description = "The price in force",
+			content = @Content(mediaType = JSON, schema = @Schema(implementation = PriceValueResponse.class)))
+	@APIResponse(responseCode = "400", ref = "BadRequest")
+	@APIResponse(responseCode = "404", ref = "NotFound")
+	public Uni<PriceValueResponse> price(@Parameter(description = ID) @PathParam("id") String id,
+			@Parameter(description = "Day (yyyy-MM-dd)", required = true, example = "2024-04-15") @QueryParam("date") String date,
+			@Parameter(description = CURRENCY) @QueryParam("currency") @DefaultValue(ApiDefaults.CURRENCY_CODE) String currency) {
+		return Uni.createFrom().item(() -> RequestParams.date(date))
+				.chain(day -> findPriceInForce.execute(new ProductId(id), day, RequestParams.currency(currency)))
+				.map(PriceValueResponse::from);
+	}
+
 	@PUT
 	@Path("/{id}/prices/{currency}/{initDate}")
 	@RolesAllowed(Scopes.WRITE)
-	@SecurityRequirement(name = Scopes.SCHEME)
+	@SecurityRequirement(name = Scopes.SCHEME, scopes = Scopes.WRITE)
 	@Operation(summary = "Change a price's value or end date",
-			description = "The price is identified by its currency and initDate. Rejected if the new period overlaps "
-					+ "another price of the same currency. Requires an OAuth 2.0 token with the products:write scope.")
-	@APIResponse(responseCode = "200", description = "Price replaced")
-	@APIResponse(responseCode = "400", description = "Invalid value or dates")
-	@APIResponse(responseCode = "401", description = "Missing or invalid token")
-	@APIResponse(responseCode = "403", description = "Token without the products:write scope")
-	@APIResponse(responseCode = "404", description = "Unknown product or price")
-	@APIResponse(responseCode = "409", description = "The new period overlaps another price in the same currency")
-	public Uni<PriceResponse> replacePrice(@PathParam("id") String id, @PathParam("currency") String currency,
-			@PathParam("initDate") String initDate, @Valid ReplacePriceRequest request) {
+			description = "The price is identified by its currency and initDate, which never change. Rejected if the new "
+					+ "period overlaps another price of the same currency. Requires a token with the products:write scope.")
+	@APIResponse(responseCode = "200", description = "Price replaced",
+			content = @Content(mediaType = JSON, schema = @Schema(implementation = PriceResponse.class)))
+	@APIResponse(responseCode = "400", ref = "BadRequest")
+	@APIResponse(responseCode = "401", ref = "Unauthorized")
+	@APIResponse(responseCode = "403", ref = "Forbidden")
+	@APIResponse(responseCode = "404", ref = "NotFound")
+	@APIResponse(responseCode = "409", ref = "Conflict")
+	public Uni<PriceResponse> replacePrice(@Parameter(description = ID) @PathParam("id") String id,
+			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
+			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate,
+			@Valid ReplacePriceRequest request) {
 		return Uni.createFrom().item(() -> {
 			Currency code = RequestParams.currency(currency);
 			LocalDate start = RequestParams.requiredDate("initDate", initDate);
@@ -182,28 +226,19 @@ public class ProductResource {
 	@DELETE
 	@Path("/{id}/prices/{currency}/{initDate}")
 	@RolesAllowed(Scopes.WRITE)
-	@SecurityRequirement(name = Scopes.SCHEME)
+	@SecurityRequirement(name = Scopes.SCHEME, scopes = Scopes.WRITE)
 	@ResponseStatus(204)
-	@Operation(summary = "Delete a price", description = "Requires an OAuth 2.0 token with the products:write scope.")
+	@Operation(summary = "Delete a price", description = "Requires a token with the products:write scope.")
 	@APIResponse(responseCode = "204", description = "Price deleted")
-	@APIResponse(responseCode = "401", description = "Missing or invalid token")
-	@APIResponse(responseCode = "403", description = "Token without the products:write scope")
-	@APIResponse(responseCode = "404", description = "Unknown product or price")
-	public Uni<Void> removePrice(@PathParam("id") String id, @PathParam("currency") String currency,
-			@PathParam("initDate") String initDate) {
+	@APIResponse(responseCode = "400", ref = "BadRequest")
+	@APIResponse(responseCode = "401", ref = "Unauthorized")
+	@APIResponse(responseCode = "403", ref = "Forbidden")
+	@APIResponse(responseCode = "404", ref = "NotFound")
+	public Uni<Void> removePrice(@Parameter(description = ID) @PathParam("id") String id,
+			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
+			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate) {
 		return Uni.createFrom().item(() -> RequestParams.currency(currency))
 				.chain(code -> removePrice.execute(new ProductId(id), code, RequestParams.requiredDate("initDate", initDate)));
-	}
-
-	@GET
-	@Path("/{id}/price")
-	@Operation(summary = "Get the price in force on a date")
-	@APIResponse(responseCode = "404", description = "Unknown product or no price on that date")
-	public Uni<PriceValueResponse> price(@PathParam("id") String id, @QueryParam("date") String date,
-			@Parameter(description = "ISO 4217 code") @QueryParam("currency") @DefaultValue(ApiDefaults.CURRENCY_CODE) String currency) {
-		return Uni.createFrom().item(() -> RequestParams.date(date))
-				.chain(day -> findPriceInForce.execute(new ProductId(id), day, RequestParams.currency(currency)))
-				.map(PriceValueResponse::from);
 	}
 
 }

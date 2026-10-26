@@ -4,12 +4,16 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.startsWith;
 
 import java.util.List;
 import java.util.Map;
@@ -47,9 +51,9 @@ class ProductApiIT {
 
 	@Test
 	void createsProduct() {
-		json().body(PRODUCT).post("/products").then()
+		json().body(PRODUCT).post("/v1/products").then()
 				.statusCode(201)
-				.header("Location", matchesPattern(".*/products/[0-9a-f]{24}"))
+				.header("Location", matchesPattern(".*/v1/products/[0-9a-f]{24}"))
 				.body("id", notNullValue())
 				.body("name", equalTo("Zapatillas deportivas"))
 				.body("description", equalTo("Modelo 2025 edición limitada"));
@@ -59,7 +63,7 @@ class ProductApiIT {
 	void getsProduct() {
 		String id = createProduct();
 
-		given().get("/products/{id}", id).then()
+		given().get("/v1/products/{id}", id).then()
 				.statusCode(200)
 				.body("id", equalTo(id))
 				.body("name", equalTo("Zapatillas deportivas"));
@@ -81,7 +85,7 @@ class ProductApiIT {
 	void returnsPriceInForceIncludingBothEnds(String date, double expected) {
 		String id = createProductWithStatementPrices();
 
-		given().get("/products/{id}/prices?date={date}", id, date).then()
+		given().get("/v1/products/{id}/prices?date={date}", id, date).then()
 				.statusCode(200)
 				.body("$", equalTo(Map.of("value", expected)));
 	}
@@ -90,7 +94,7 @@ class ProductApiIT {
 	void singularPriceAliasReturnsTheSamePrice() {
 		String id = createProductWithStatementPrices();
 
-		given().get("/products/{id}/price?date=2024-04-15", id).then()
+		given().get("/v1/products/{id}/price?date=2024-04-15", id).then()
 				.statusCode(200)
 				.body("$", equalTo(Map.of("value", 99.99)));
 	}
@@ -99,7 +103,7 @@ class ProductApiIT {
 	void returnsNotFoundWhenNoPriceIsInForce() {
 		String id = createProductWithStatementPrices();
 
-		expectProblem(given().get("/products/{id}/prices?date=2024-07-01", id).then(), 404);
+		expectProblem(given().get("/v1/products/{id}/prices?date=2024-07-01", id).then(), 404);
 	}
 
 	@Test
@@ -108,7 +112,7 @@ class ProductApiIT {
 		addPrice(id, Map.of("value", 199.99, "initDate", "2025-01-01", "endDate", "2025-06-30")).then().statusCode(201);
 		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")).then().statusCode(201);
 
-		given().get("/products/{id}/prices", id).then()
+		given().get("/v1/products/{id}/prices", id).then()
 				.statusCode(200)
 				.body("$", equalTo(Map.of(
 						"name", "Zapatillas deportivas",
@@ -121,12 +125,12 @@ class ProductApiIT {
 	@Test
 	void readsSeeANewPriceRightAfterItIsAdded() {
 		String id = createProductWithStatementPrices();
-		given().get("/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(2));
+		given().get("/v1/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(2));
 
 		addPrice(id, Map.of("value", 149.99, "initDate", "2024-07-01", "endDate", "2024-12-31")).then().statusCode(201);
 
-		given().get("/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(3));
-		given().get("/products/{id}/price?date=2024-10-01", id).then().statusCode(200).body("value", equalTo(149.99));
+		given().get("/v1/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(3));
+		given().get("/v1/products/{id}/price?date=2024-10-01", id).then().statusCode(200).body("value", equalTo(149.99));
 	}
 
 	@Test
@@ -134,7 +138,7 @@ class ProductApiIT {
 		String id = createProduct();
 		addPrice(id, Map.of("value", 99.99, "initDate", "2024-01-01")).then().statusCode(201);
 
-		given().get("/products/{id}/prices", id).then()
+		given().get("/v1/products/{id}/prices", id).then()
 				.statusCode(200)
 				.body("prices[0]", hasKey("endDate"))
 				.body("prices[0].endDate", nullValue());
@@ -154,8 +158,8 @@ class ProductApiIT {
 		addPrice(id, Map.of("value", 109.99, "currency", "USD", "initDate", "2024-01-01", "endDate", "2024-06-30"))
 				.then().statusCode(201);
 
-		given().get("/products/{id}/price?date=2024-04-15&currency=USD", id).then().statusCode(200).body("value", equalTo(109.99));
-		given().get("/products/{id}/price?date=2024-04-15", id).then().statusCode(200).body("value", equalTo(99.99));
+		given().get("/v1/products/{id}/price?date=2024-04-15&currency=USD", id).then().statusCode(200).body("value", equalTo(109.99));
+		given().get("/v1/products/{id}/price?date=2024-04-15", id).then().statusCode(200).body("value", equalTo(99.99));
 	}
 
 	@ParameterizedTest(name = "{0}")
@@ -172,7 +176,7 @@ class ProductApiIT {
 	void rejectsInvalidPrice(String scenario, String body, String field) {
 		String id = createProduct();
 
-		expectProblem(json().body(body).post("/products/{id}/prices", id).then(), 400)
+		expectProblem(json().body(body).post("/v1/products/{id}/prices", id).then(), 400)
 				.body("errors[0].field", equalTo(field));
 	}
 
@@ -183,7 +187,7 @@ class ProductApiIT {
 		expectProblem(addPrice(id, Map.of("value", 9.999, "initDate", "2024-06-30", "endDate", "2024-01-01")).then(), 400)
 				.body("errors.field", containsInAnyOrder("value", "endDate"));
 
-		given().get("/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(0));
+		given().get("/v1/products/{id}/prices", id).then().statusCode(200).body("prices", hasSize(0));
 	}
 
 	@Test
@@ -191,12 +195,12 @@ class ProductApiIT {
 		String id = createProductWithStatementPrices();
 
 		authorized(WRITE_SCOPE).body(Map.of("value", 89.99, "endDate", "2024-03-31"))
-				.put("/products/{id}/prices/EUR/2024-01-01", id).then()
+				.put("/v1/products/{id}/prices/EUR/2024-01-01", id).then()
 				.statusCode(200)
 				.body("$", equalTo(Map.of("value", 89.99, "initDate", "2024-01-01", "endDate", "2024-03-31")));
 
-		given().get("/products/{id}/price?date=2024-03-31", id).then().statusCode(200).body("value", equalTo(89.99));
-		expectProblem(given().get("/products/{id}/price?date=2024-04-01", id).then(), 404);
+		given().get("/v1/products/{id}/price?date=2024-03-31", id).then().statusCode(200).body("value", equalTo(89.99));
+		expectProblem(given().get("/v1/products/{id}/price?date=2024-04-01", id).then(), 404);
 	}
 
 	@Test
@@ -204,35 +208,35 @@ class ProductApiIT {
 		String id = createProductWithStatementPrices();
 
 		expectProblem(authorized(WRITE_SCOPE).body(Map.of("value", 99.99, "endDate", "2025-02-01"))
-				.put("/products/{id}/prices/EUR/2024-01-01", id).then(), 409);
+				.put("/v1/products/{id}/prices/EUR/2024-01-01", id).then(), 409);
 	}
 
 	@Test
 	void replacingOrDeletingAnUnknownPriceIsNotFound() {
 		String id = createProductWithStatementPrices();
 
-		expectProblem(authorized(WRITE_SCOPE).body(Map.of("value", 10)).put("/products/{id}/prices/EUR/2024-02-01", id).then(), 404);
-		expectProblem(authorized(WRITE_SCOPE).delete("/products/{id}/prices/USD/2024-01-01", id).then(), 404);
+		expectProblem(authorized(WRITE_SCOPE).body(Map.of("value", 10)).put("/v1/products/{id}/prices/EUR/2024-02-01", id).then(), 404);
+		expectProblem(authorized(WRITE_SCOPE).delete("/v1/products/{id}/prices/USD/2024-01-01", id).then(), 404);
 	}
 
 	@Test
 	void deletesAPrice() {
 		String id = createProductWithStatementPrices();
 
-		authorized(WRITE_SCOPE).delete("/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(204);
+		authorized(WRITE_SCOPE).delete("/v1/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(204);
 
-		given().get("/products/{id}/prices", id).then().statusCode(200)
+		given().get("/v1/products/{id}/prices", id).then().statusCode(200)
 				.body("prices.initDate", contains("2025-01-01"));
-		expectProblem(authorized(WRITE_SCOPE).delete("/products/{id}/prices/EUR/2024-01-01", id).then(), 404);
+		expectProblem(authorized(WRITE_SCOPE).delete("/v1/products/{id}/prices/EUR/2024-01-01", id).then(), 404);
 	}
 
 	@Test
 	void changingPricesNeedsATokenWithTheWriteScope() {
 		String id = createProductWithStatementPrices();
 
-		json().body(Map.of("value", 10)).put("/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(401);
-		given().delete("/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(401);
-		authorized("products:read").delete("/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(403);
+		json().body(Map.of("value", 10)).put("/v1/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(401);
+		given().delete("/v1/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(401);
+		authorized("products:read").delete("/v1/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(403);
 	}
 
 	@Test
@@ -240,19 +244,19 @@ class ProductApiIT {
 		String id = createProductWithStatementPrices();
 		addPrice(id, Map.of("value", 299.99, "initDate", "2026-01-01")).then().statusCode(201);
 
-		given().get("/products/{id}/prices?size=2&page=0", id).then()
+		given().get("/v1/products/{id}/prices?size=2&page=0", id).then()
 				.statusCode(200)
 				.header("X-Total-Count", "3")
 				.header("Link", containsString("rel=\"next\""))
 				.body("prices.initDate", contains("2024-01-01", "2025-01-01"));
-		given().get("/products/{id}/prices?size=2&page=1", id).then()
+		given().get("/v1/products/{id}/prices?size=2&page=1", id).then()
 				.statusCode(200)
 				.header("Link", containsString("rel=\"prev\""))
 				.body("prices.initDate", contains("2026-01-01"));
-		given().get("/products/{id}/prices?sort=initDate,desc", id).then()
+		given().get("/v1/products/{id}/prices?sort=initDate,desc", id).then()
 				.statusCode(200)
 				.body("prices.initDate", contains("2026-01-01", "2025-01-01", "2024-01-01"));
-		given().get("/products/{id}/prices?from=2024-07-01&to=2025-12-31", id).then()
+		given().get("/v1/products/{id}/prices?from=2024-07-01&to=2025-12-31", id).then()
 				.statusCode(200)
 				.body("prices.initDate", contains("2025-01-01"));
 	}
@@ -267,7 +271,7 @@ class ProductApiIT {
 	void rejectsInvalidHistoryQueries(String scenario, String query, String field) {
 		String id = createProduct();
 
-		expectProblem(given().get("/products/{id}/prices?" + query, id).then(), 400)
+		expectProblem(given().get("/v1/products/{id}/prices?" + query, id).then(), 400)
 				.body("errors[0].field", equalTo(field));
 	}
 
@@ -277,28 +281,59 @@ class ProductApiIT {
 				.statusCode(200)
 				.body("components.securitySchemes.keySet()", contains("oauth2"))
 				.body("components.securitySchemes.oauth2.flows.clientCredentials.scopes", hasKey(WRITE_SCOPE))
-				.body("paths.'/products/{id}/prices/{currency}/{initDate}'.put.security[0]", hasKey("oauth2"))
-				.body("paths.'/products/{id}/prices/{currency}/{initDate}'.delete.security[0]", hasKey("oauth2"));
+				.body("paths.'/v1/products/{id}/prices/{currency}/{initDate}'.put.security[0]", hasKey("oauth2"))
+				.body("paths.'/v1/products/{id}/prices/{currency}/{initDate}'.delete.security[0]", hasKey("oauth2"));
+	}
+
+	@Test
+	void swaggerDocumentsTheVersionedApiWithItsRulesAndErrors() {
+		given().get("/q/openapi?format=json").then()
+				.statusCode(200)
+				.body("info.description", containsString("Authorize"))
+				.body("info.description", containsString("closed interval"))
+				.body("components.responses.keySet()", hasItems("BadRequest", "NotFound", "Conflict", "Unauthorized", "Forbidden"))
+				.body("components.schemas.Problem.properties.keySet()", hasItems("title", "status", "detail", "errors"))
+				.body("paths.keySet()", everyItem(startsWith("/v1/products")))
+				.body("paths.'/v1/products'.post.responses.'201'.headers.keySet()", contains("Location"))
+				.body("paths.'/v1/products'.post.responses.'201'.content.'application/json'.schema.$ref", endsWith("ProductResponse"))
+				.body("paths.'/v1/products/{id}/prices'.post.responses.'409'.$ref", endsWith("Conflict"));
+	}
+
+	@Test
+	void theStatementsUnversionedPathsStillWork() {
+		String location = json().body(PRODUCT).post("/products").then()
+				.statusCode(201)
+				.header("Location", matchesPattern(".*/products/[0-9a-f]{24}"))
+				.extract().header("Location");
+		String id = location.substring(location.lastIndexOf('/') + 1);
+
+		json().body(Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30"))
+				.post("/products/{id}/prices", id).then().statusCode(201);
+		given().get("/products/{id}/prices?date=2024-06-30", id).then()
+				.statusCode(200).body("$", equalTo(Map.of("value", 99.99)));
+		given().get("/products/{id}/prices", id).then()
+				.statusCode(200).body("prices.initDate", contains("2024-01-01"));
+		given().delete("/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(401);
 	}
 
 	@Test
 	void echoesOrAssignsARequestId() {
-		given().header("X-Request-Id", "trace-123").get("/products/{id}", createProduct()).then()
+		given().header("X-Request-Id", "trace-123").get("/v1/products/{id}", createProduct()).then()
 				.header("X-Request-Id", "trace-123");
-		given().get("/products/{id}", createProduct()).then().header("X-Request-Id", notNullValue());
+		given().get("/v1/products/{id}", createProduct()).then().header("X-Request-Id", notNullValue());
 	}
 
 	@Test
 	void rejectsMalformedDate() {
 		String id = createProduct();
 
-		expectProblem(given().get("/products/{id}/prices?date=2024-13-01", id).then(), 400)
+		expectProblem(given().get("/v1/products/{id}/prices?date=2024-13-01", id).then(), 400)
 				.body("errors.field", contains("date"));
 	}
 
 	@Test
 	void rejectsProductWithoutName() {
-		expectProblem(json().body(Map.of("name", " ")).post("/products").then(), 400)
+		expectProblem(json().body(Map.of("name", " ")).post("/v1/products").then(), 400)
 				.body("errors[0].field", equalTo("name"));
 	}
 
@@ -306,14 +341,14 @@ class ProductApiIT {
 	void returnsNotFoundForUnknownProduct() {
 		String unknown = "65f0c0ffee0000000000beef";
 
-		expectProblem(given().get("/products/{id}", unknown).then(), 404);
-		expectProblem(given().get("/products/{id}/prices", unknown).then(), 404);
-		expectProblem(given().get("/products/{id}/prices?date=2024-01-01", unknown).then(), 404);
+		expectProblem(given().get("/v1/products/{id}", unknown).then(), 404);
+		expectProblem(given().get("/v1/products/{id}/prices", unknown).then(), 404);
+		expectProblem(given().get("/v1/products/{id}/prices?date=2024-01-01", unknown).then(), 404);
 		expectProblem(addPrice(unknown, Map.of("value", 10, "initDate", "2024-01-01")).then(), 404);
 	}
 
 	private static String createProduct() {
-		return json().body(PRODUCT).post("/products").then().statusCode(201).extract().path("id");
+		return json().body(PRODUCT).post("/v1/products").then().statusCode(201).extract().path("id");
 	}
 
 	private static String createProductWithStatementPrices() {
@@ -324,7 +359,7 @@ class ProductApiIT {
 	}
 
 	private static Response addPrice(String id, Map<String, ?> body) {
-		return json().body(body).post("/products/{id}/prices", id);
+		return json().body(body).post("/v1/products/{id}/prices", id);
 	}
 
 	private static RequestSpecification authorized(String scope) {
