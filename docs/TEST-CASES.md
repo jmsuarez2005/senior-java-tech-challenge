@@ -181,10 +181,10 @@ Read-only cases over the 8 products loaded at startup from [seed/catalog.json](.
 | Case | Where | Why not here |
 |---|---|---|
 | 50 concurrent overlapping inserts, exactly one accepted | `MongoProductRepositoryIT` | Needs precise concurrency control; it tests the atomic write in MongoDB |
-| Redis down or slow: requests served from MongoDB | Manual run under load, recorded in the README (Redis cache) | Needs to stop a container in the middle of the run; not automated |
+| Redis down or slow: requests served from MongoDB | Manual run under load, recorded in [DESIGN.md](DESIGN.md#redis-cache) | Needs to stop a container in the middle of the run; not automated |
 | A failed cache write removes the entry instead of leaving a stale one | `RedisProductCacheIT` | Needs Redis to fail on demand |
 | An older cache entry never replaces a newer one | `NearProductCacheTest`, `RedisProductCacheIT` | Depends on timing between two readers |
-| `PRODUCTS_AUTH_ALL=true`: every product call needs a token | Manual check, recorded in the README | Needs the stack started with another setting |
+| `PRODUCTS_AUTH_ALL=true`: every product call needs a token | Manual check; the behaviour is described in [DESIGN.md](DESIGN.md#authentication) | Needs the stack started with another setting |
 | Behaviour under load | k6, `perf/load-test.js` | A performance concern, not a functional one |
 
 ## Defects found

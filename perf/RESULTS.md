@@ -234,7 +234,7 @@ not the cache. This is why `main` runs with it.
 ## The near cache does not scale out by itself
 
 The gain comes from keeping a copy of each product inside each app instance, and that is exactly what breaks when
-the service scales out. The README explains the implications for microservices and the options; in short:
+the service scales out. [docs/DESIGN.md](../docs/DESIGN.md#local-cache-in-distributed-microservices) explains the implications for microservices and the options; in short:
 
 - **No shared invalidation.** When instance A adds a price, it refreshes its own in-process copy and Redis. Instance
   B keeps serving its own copy until it expires. A client load-balanced across instances can read a new price and
