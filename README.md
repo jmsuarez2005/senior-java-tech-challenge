@@ -333,7 +333,8 @@ It is the best configuration measured, and it is what `main` runs by default:
 
 - **Same load, lower latency at every percentile.** At a fixed 450 requests per second, against the same code with
   Redis only: median 2.7 ms against 6.7 ms, p95 43 ms against 104 ms, p99 102 ms against 227 ms (averages of two
-  runs each). It is the only configuration that meets the statement's load-test threshold, p95 under 50 ms.
+  runs each). Across all seven configurations measured the same way, it is the only one that stayed under the
+  statement's load-test threshold, p95 under 50 ms, in both rounds.
 - **More requests with less CPU.** In the closed-loop scenario of the statement it served 26% more requests with
   25% less app CPU per request (69% more in branch 06, measured on a healthy machine).
 - One closed-loop result looks worse and is not: p99 rose about 30% there because the app answered faster, so more
@@ -343,14 +344,17 @@ Details in [perf/RESULTS.md](perf/RESULTS.md). It is the right default for the c
 grades performance. With several instances the trade-off changes, as the next sections explain;
 `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off and leaves Redis as the only cache.
 
-### Pros and cons of the chosen configuration
+### Pros and cons of the winning configuration
 
-Local in-process cache (5 s) in front of Redis (1 min), in front of MongoDB:
+Quarkus reactive with a local in-process cache (5 s) in front of Redis (1 min), in front of MongoDB. The figures
+come from running all seven configurations at a fixed 450 requests per second (see
+[Stack decision](#stack-decision)):
 
 | Pros | Cons |
 |---|---|
-| Lowest latency measured at every percentile under the same load; the only setup with p95 under 50 ms | With several instances, each serves its own copy: a price changed through another instance can be up to 5 s stale here |
-| Most requests per second and least app CPU per request | No read-your-writes across instances behind a load balancer; a client can see a change and then the old value |
+| Best of the seven configurations at every percentile: median 2.3 ms, p95 39 ms, p99 92 ms, no errors; Redis-only on the same stack: 4.4, 65 and 159 ms | With several instances, each serves its own copy: a price changed through another instance can be up to 5 s stale here |
+| The only one under the statement's p95 threshold of 50 ms in both rounds | No read-your-writes across instances behind a load balancer; a client can see a change and then the old value |
+| Least app CPU per request of all (1,847 us), so the most requests per CPU; 3,290 req/s in the closed loop against 1,945 without it | The features `main` adds on top (OAuth, observability) cost about 20% CPU per request and part of the latency gain |
 | A hit needs no network, no JSON decoding and no rebuilding of the aggregate; Redis load halves | Not acceptable as-is for reads that charge money in a multi-instance deployment |
 | Writes through the same instance are visible immediately; versions stop an older copy replacing a newer one | Each instance holds its own copy (up to 10,000 products) and starts cold after a deploy or scale-out |
 | Redis behind it keeps instances sharing data on misses and keeps working if one instance restarts | One more layer to reason about when debugging stale data |
@@ -527,8 +531,9 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
    CPU. The first, smaller run showed MongoDB saturated at its half CPU while the app was mostly idle.
 2. **Redis** was added as an auxiliary container. Throughput went up 43% and p99 dropped 29%, and the app itself
    became the limit.
-3. **Spring MVC with virtual threads** replaced WebFlux to test whether the reactive machinery paid off. It did
-   not: with the app at its CPU limit, the blocking version served more requests with a lower tail latency.
+3. **Spring MVC with virtual threads** replaced WebFlux to test whether the reactive machinery paid off. In the
+   closed loop it did not: the blocking version served more requests with a lower tail latency. Under a fixed rate
+   the result reversed (see the table below).
 4. **Quarkus with virtual threads** kept the same design and only replaced the adapters. It beat both Spring
    variants in every metric.
 5. **Quarkus reactive** (Mutiny, reactive drivers) was measured last, because the reactive model deserved a
@@ -538,19 +543,38 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
    stale cache after a failed write, missing timeouts) cost about 4% of throughput, all of it the circuit breaker.
 7. **A local cache** in the app was the biggest gain of all (+69% throughput in branch 06, +26% on `main`). It is on
    by default for the challenge's single instance, with a switch and the consistency trade-off documented for
-   distributed deployments. A fixed-rate comparison confirmed it is faster at every percentile, p99 included.
+   distributed deployments.
+8. **Every configuration again at a fixed rate**, the same load for all, settled the ranking:
 
 
-| Branch | Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
-|---|---|---|---|---|---|---|
-| `experiment/01-spring-webflux` | Spring Boot 4, WebFlux, reactive drivers | ~1,060 | ~250 ms | ~350 ms | 7 s | ~265 MB |
-| `experiment/02-spring-mvc-virtual-threads` | Spring Boot 4, MVC, virtual threads | ~1,330 | ~207 ms | ~301 ms | 12 s | ~265 MB |
-| `experiment/03-quarkus-virtual-threads` | Quarkus 3, virtual threads | ~1,790 | ~161 ms | ~221 ms | 2.5 s | ~150 MB |
-| `experiment/04-quarkus-reactive` | **Quarkus 3, reactive (Mutiny)** | **~1,980** | **~148 ms** | **~198 ms** | **2.5 s** | **~150 MB** |
-| `experiment/05-review-fixes` | + fixes from the technical review | ~1,945 | ~152 ms | ~201 ms | 2.3 s | ~155 MB |
-| `experiment/06-near-cache` | **+ in-process cache in front of Redis (on `main`)** | ~3,290 | ~130 ms | ~208 ms | 2.7 s | ~160 MB |
+**All configurations under the same load.** Every branch was run again with the same k6 script at a fixed 450
+requests per second (open model), two interleaved rounds, each in its best configuration (Redis on; the local cache
+on where it exists). Averages of the two rounds:
 
-Each branch is frozen at the code that was measured and can be run again with `docker compose up --build`.
+| Branch | Configuration | median | p95 | p99 | Errors | App CPU per request | Startup |
+|---|---|---|---|---|---|---|---|
+| `experiment/01-spring-webflux` | Spring Boot 4, WebFlux + Redis | 12.1 ms | 151 ms | 316 ms | 0% | 2,971 us | 10.5 s |
+| `experiment/02-spring-mvc-virtual-threads` | Spring Boot 4, MVC, virtual threads + Redis | 33.9 ms | 851 ms | 1,478 ms | 2.5% | 2,999 us | 12.4 s |
+| `experiment/03-quarkus-virtual-threads` | Quarkus 3, virtual threads + Redis | 7.2 ms | 114 ms | 1,204 ms | 0.9% | 2,212 us | 4.1 s |
+| `experiment/04-quarkus-reactive` | Quarkus 3, reactive (Mutiny) + Redis | 3.9 ms | 57 ms | 208 ms | 0% | 1,887 us | 4.4 s |
+| `experiment/05-review-fixes` | + fixes from the technical review | 4.4 ms | 65 ms | 159 ms | 0% | 2,007 us | 4.3 s |
+| `experiment/06-near-cache` | **+ local cache in front of Redis (winner)** | **2.3 ms** | **39 ms** | **92 ms** | **0%** | **1,847 us** | **4.3 s** |
+| `main` | winner + OAuth, observability, new endpoints | 3.2 ms | 81 ms | 213 ms | 0% | 2,148 us | 6.5 s |
+
+The local cache (branch 06) is the best configuration at every percentile, with the least CPU per request, in both
+rounds, and the only one under the statement's p95 threshold of 50 ms in both. `main` runs that same configuration
+plus the features the challenge asks for, which cost CPU; its two rounds also spread widely (p95 44 ms, then
+118 ms) on a host that was competing for CPU. Each branch is frozen at the measured code and can be run again with
+`docker compose up --build`; the raw runs are in [perf/RESULTS.md](perf/RESULTS.md).
+
+The fixed rate changed one earlier conclusion. In the closed loop (each user waits for its answer before sending the
+next request), Spring MVC on virtual threads served more requests than WebFlux. Under a fixed 450 requests per
+second it could not keep up: requests queued, 2.5% failed and p99 passed one second, while WebFlux absorbed the same
+load without errors. Quarkus reactive won under both models.
+
+Throughput in the closed loop, measured earlier on a healthier machine, for reference: WebFlux about 1,060 req/s,
+MVC with virtual threads 1,330, Quarkus with virtual threads 1,790, Quarkus reactive 1,980, with the review fixes
+1,945, with the local cache 3,290.
 
 Reactive lost on Spring and won on Quarkus. The most likely reason is the layer underneath: Mutiny on Vert.x is
 thinner than Reactor on WebFlux. That is why the model was measured again instead of being ruled out.
