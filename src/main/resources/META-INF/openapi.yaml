@@ -6,11 +6,14 @@ info:
     Products with historical prices. A product can have many prices over time, but only **one price in force per day
     and currency**.
 
-    ## Versioning
-    Every endpoint lives under `/v1`. The challenge's four mandatory endpoints are also served exactly as specified,
-    without the version prefix (`POST /products`, `POST /products/{id}/prices`, `GET /products/{id}/prices?date=` and
-    `GET /products/{id}/prices`), because its automated tests call them there. New clients should use `/v1`; the
-    reasons for each change are in the project README.
+    ## Two groups of endpoints
+    - **Challenge endpoints** are the statement's four endpoints, exactly as specified (`POST /products`,
+      `POST /products/{id}/prices`, `GET /products/{id}/prices?date=` and `GET /products/{id}/prices`). They are used
+      by the challenge's automated tests and never change.
+    - **Products (v1)** is the same API versioned under `/v1`, plus the improvements: a singular
+      `GET /v1/products/{id}/price`, `GET /v1/products/{id}`, updating and deleting prices, and paging the history.
+      Both groups share one implementation, so they answer the same way; the reasons for each addition are in the
+      project README.
 
     ## Rules
     - **Validity is a closed interval:** `[initDate, endDate]` includes both days. A price ending on `2024-06-30` is
@@ -51,8 +54,10 @@ info:
     ## Tracing
     Every response carries an `X-Request-Id`. Send your own to find a request in the logs and across services.
 tags:
+  - name: Challenge endpoints
+    description: The four endpoints of the statement, unchanged
   - name: Products
-    description: Products and their price history
+    description: Products and their price history, versioned under /v1, with the improvements
 components:
   schemas:
     Problem:

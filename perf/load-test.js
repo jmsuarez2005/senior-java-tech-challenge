@@ -38,7 +38,7 @@ export function setup() {
   for (let start = 0; start < PRODUCTS; start += SEED_BATCH) {
     const size = Math.min(SEED_BATCH, PRODUCTS - start);
     const created = http.batch(Array.from({ length: size }, (_, i) => [
-      'POST', `${BASE_URL}/v1/products`,
+      'POST', `${BASE_URL}/products`,
       JSON.stringify({ name: `Product ${start + i}`, description: 'Seeded for the load test' }), JSON_HEADERS,
     ]));
     created.forEach((res) => {
@@ -50,7 +50,7 @@ export function setup() {
   const prices = [];
   ids.forEach((id, n) => {
     for (let year = 0; year < PRICES_PER_PRODUCT; year++) {
-      prices.push(['POST', `${BASE_URL}/v1/products/${id}/prices`, JSON.stringify({
+      prices.push(['POST', `${BASE_URL}/products/${id}/prices`, JSON.stringify({
         value: Number((10 + n % 90 + year + 0.99).toFixed(2)),
         initDate: `${SEED_FIRST_YEAR + year}-01-01`,
         endDate: `${SEED_FIRST_YEAR + year}-12-31`,
@@ -70,13 +70,13 @@ export default function ({ ids }) {
   const roll = Math.random();
 
   if (roll < 0.7) {
-    const res = http.get(`${BASE_URL}/v1/products/${id}/prices?date=${randomSeededDate()}`, { tags: { name: 'price-on-date' } });
+    const res = http.get(`${BASE_URL}/products/${id}/prices?date=${randomSeededDate()}`, { tags: { name: 'price-on-date' } });
     check(res, { 'price 200': (r) => r.status === 200 });
   } else if (roll < 0.9) {
-    const res = http.get(`${BASE_URL}/v1/products/${id}/prices`, { tags: { name: 'price-history' } });
+    const res = http.get(`${BASE_URL}/products/${id}/prices`, { tags: { name: 'price-history' } });
     check(res, { 'history 200': (r) => r.status === 200 });
   } else {
-    const res = http.post(`${BASE_URL}/v1/products/${id}/prices`, JSON.stringify(uniqueFuturePrice()),
+    const res = http.post(`${BASE_URL}/products/${id}/prices`, JSON.stringify(uniqueFuturePrice()),
       { ...JSON_HEADERS, tags: { name: 'add-price' } });
     check(res, { 'add price 201': (r) => r.status === 201 });
   }

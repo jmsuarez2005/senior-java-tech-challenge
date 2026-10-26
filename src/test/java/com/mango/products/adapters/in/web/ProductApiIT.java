@@ -5,7 +5,6 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
-import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasKey;
@@ -13,7 +12,6 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
-import static org.hamcrest.Matchers.startsWith;
 
 import java.util.List;
 import java.util.Map;
@@ -293,7 +291,10 @@ class ProductApiIT {
 				.body("info.description", containsString("closed interval"))
 				.body("components.responses.keySet()", hasItems("BadRequest", "NotFound", "Conflict", "Unauthorized", "Forbidden"))
 				.body("components.schemas.Problem.properties.keySet()", hasItems("title", "status", "detail", "errors"))
-				.body("paths.keySet()", everyItem(startsWith("/v1/products")))
+				.body("tags.name", contains("Challenge endpoints", "Products"))
+				.body("paths.keySet()", hasItems("/products", "/products/{id}/prices", "/v1/products/{id}/price"))
+				.body("paths.'/products/{id}/prices'.keySet()", containsInAnyOrder("get", "post"))
+				.body("paths.'/products'.post.tags", contains("Challenge endpoints"))
 				.body("paths.'/v1/products'.post.responses.'201'.headers.keySet()", contains("Location"))
 				.body("paths.'/v1/products'.post.responses.'201'.content.'application/json'.schema.$ref", endsWith("ProductResponse"))
 				.body("paths.'/v1/products/{id}/prices'.post.responses.'409'.$ref", endsWith("Conflict"));
@@ -312,8 +313,9 @@ class ProductApiIT {
 		given().get("/products/{id}/prices?date=2024-06-30", id).then()
 				.statusCode(200).body("$", equalTo(Map.of("value", 99.99)));
 		given().get("/products/{id}/prices", id).then()
-				.statusCode(200).body("prices.initDate", contains("2024-01-01"));
-		given().delete("/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(401);
+				.statusCode(200).body("$", equalTo(Map.of("name", "Zapatillas deportivas",
+						"description", "Modelo 2025 edición limitada",
+						"prices", List.of(Map.of("value", 99.99, "initDate", "2024-01-01", "endDate", "2024-06-30")))));
 	}
 
 	@Test
