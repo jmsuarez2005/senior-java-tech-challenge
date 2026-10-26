@@ -36,7 +36,7 @@ leaves Redis only, which is what several instances need (see
 | `http://localhost:8180` | Keycloak, the OAuth 2.0 authorization server (admin / admin) |
 
 Keycloak runs on half a CPU, so on a small machine the first start of the whole stack takes one to three minutes;
-the API itself starts in about 2.5 s once its dependencies are up.
+the API itself starts in about 5 s once its dependencies are up.
 
 For local development, start Keycloak from the compose file and run Quarkus dev mode with the Gradle wrapper
 (Java 21); Dev Services start MongoDB and Redis in Docker for you:
@@ -46,8 +46,8 @@ docker compose up -d keycloak
 sh gradlew quarkusDev
 ```
 
-Tests need a running Docker daemon (Dev Services start MongoDB and Redis; OAuth is tested against a mock
-authorization server):
+Tests need a running Docker daemon (Dev Services start MongoDB and Redis; OAuth is tested with JWTs the tests sign
+themselves with a throwaway key pair in `src/test/resources`):
 
 ```bash
 sh gradlew build
@@ -75,7 +75,7 @@ every parameter, schema, example and error, is in [Swagger UI](#swagger-ui), whe
 
 | Method | Path | Result |
 |---|---|---|
-| `POST` | `/v1/products` | `201`, `Location` pointing to `/products/{id}`, body `{id, name, description}` |
+| `POST` | `/v1/products` | `201`, `Location` pointing to `/v1/products/{id}`, body `{id, name, description}` |
 | `GET` | `/v1/products/{id}` | `200`, the product |
 | `POST` | `/v1/products/{id}/prices` | `201`, the created price |
 | `GET` | `/v1/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
@@ -193,8 +193,13 @@ The same description is available as a machine-readable document at `/q/openapi`
 Service-to-service calls use **OAuth 2.0 client credentials**, the standard flow between microservices: a calling
 service authenticates with its own client id and secret against an authorization server, receives a short-lived JWT
 access token and sends it as `Authorization: Bearer <token>`. The API is a resource server: it validates the token's
-signature locally against the authorization server's public keys (fetched once and cached), so there is no call to
-the authorization server per request.
+signature locally against the authorization server's public keys (JWKS, fetched on first use and cached), its issuer
+and expiry, and reads its scopes, so there is no call to the authorization server per request.
+
+The validation uses **SmallRye JWT**, which does exactly that and nothing else. The full Quarkus OIDC extension was
+used first; it is built for applications that also log users in, and it added work to every request, protected or
+not. With SmallRye JWT and authentication only on the endpoints that require it, public requests pay nothing for
+security (see [perf/RESULTS.md](perf/RESULTS.md)).
 
 The authorization server is **Keycloak**, started by `docker compose` with the `products` realm imported from
 [keycloak/products-realm.json](keycloak/products-realm.json). It defines two service clients:
@@ -232,9 +237,10 @@ What is protected, and why:
   overlapping. Reads are not logged one by one; their volume is covered by metrics.
 - **Request ids.** Every request gets an `X-Request-Id` (the caller's, if it sends one, so a request can be followed
   across services) that appears in its log lines and is echoed in the response.
-- **Metrics.** Prometheus format at `/q/metrics`: cache reads by result
-  (`products_cache_reads_total{result=hit|miss|error}`), cache write errors, circuit breaker state, and JVM memory,
-  GC and threads. Per-endpoint request timers (`http_server_requests_seconds`) are available with
+- **Metrics.** Prometheus format at `/q/metrics`: Redis reads by result
+  (`products_cache_reads_total{result=hit|miss|error}`, counted when the local cache misses, so a read served from
+  memory does not appear), cache write errors, and JVM memory, GC and threads. The circuit breaker logs its state
+  changes instead of recording metrics on every Redis call. Per-endpoint request timers (`http_server_requests_seconds`) are available with
   `-Dquarkus.micrometer.binder.http-server.enabled=true` at build time; they are off by default because they
   measured at about 18% more CPU per request, the largest single cost of the observability added.
 - **Logging API.** The code logs through JBoss Logging, the API Quarkus itself uses; Quarkus routes Log4j 2, SLF4J
@@ -248,7 +254,8 @@ What is protected, and why:
 Hexagonal, with the dependency rule checked by ArchUnit on every build:
 
 ```
-adapters/in/web      JAX-RS resource, request/response records, input validation, problem details
+adapters/in/web      ChallengeResource (statement paths) and ProductResource (/v1) over one ProductEndpoints;
+                     request/response records, input validation, problem details, request ids
 application          one class per use case returning Mutiny Uni, plus the outbound ports ProductRepository and ProductCache
 domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
 adapters/out/mongo   MongoDB document mapping and the ProductRepository implementation
@@ -354,7 +361,7 @@ come from running all seven configurations at a fixed 450 requests per second (s
 |---|---|
 | Best of the seven configurations at every percentile: median 2.3 ms, p95 39 ms, p99 92 ms, no errors; Redis-only on the same stack: 4.4, 65 and 159 ms | With several instances, each serves its own copy: a price changed through another instance can be up to 5 s stale here |
 | The only one under the statement's p95 threshold of 50 ms in both rounds | No read-your-writes across instances behind a load balancer; a client can see a change and then the old value |
-| Least app CPU per request of all (1,847 us), so the most requests per CPU; 3,290 req/s in the closed loop against 1,945 without it | The features `main` adds on top (OAuth, observability) cost about 20% CPU per request and part of the latency gain |
+| Least app CPU per request of all (1,847 us), so the most requests per CPU; 3,290 req/s in the closed loop against 1,945 without it | The features `main` adds on top (OAuth, observability) cost about 10% CPU per request and part of the tail: p99 152 ms on `main` |
 | A hit needs no network, no JSON decoding and no rebuilding of the aggregate; Redis load halves | Not acceptable as-is for reads that charge money in a multi-instance deployment |
 | Writes through the same instance are visible immediately; versions stop an older copy replacing a newer one | Each instance holds its own copy (up to 10,000 products) and starts cold after a deploy or scale-out |
 | Redis behind it keeps instances sharing data on misses and keeps working if one instance restarts | One more layer to reason about when debugging stale data |
@@ -430,7 +437,7 @@ what makes it fast, and any rule engine can be added without touching it.
 
 Startup and footprint:
 
-- Quarkus does dependency injection and configuration at build time; the app starts in about 2.5 s inside its
+- Quarkus does dependency injection and configuration at build time; the app starts in 4 to 5 s inside its
   1 CPU container and uses about 150 MB under load.
 - A CDS archive is created at image build with a training run (start, then a graceful stop), so the first start in
   a fresh container already loads classes from it.
@@ -502,7 +509,8 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
 - MongoDB, capped at half a CPU, is the busiest container once the cache is on: writes always go there. It is the
   next thing to scale (a replica for reads that miss the cache, or a write-behind buffer for prices).
 - Absolute numbers in `perf/RESULTS.md` come from a 2 CPU machine where the containers compete for the host; the
-  comparisons between runs hold, the k6 thresholds (`p95 < 50 ms`) are not met there.
+  comparisons between runs hold. On that machine the closed-loop scenario at 200 virtual users does not meet the k6
+  threshold of `p95 < 50 ms`; at a fixed 450 req/s the winning configuration does.
 - Paging of the history happens in memory over the aggregate, which is already read whole; it bounds the response,
   not the read.
 
@@ -559,12 +567,12 @@ on where it exists). Averages of the two rounds:
 | `experiment/04-quarkus-reactive` | Quarkus 3, reactive (Mutiny) + Redis | 3.9 ms | 57 ms | 208 ms | 0% | 1,887 us | 4.4 s |
 | `experiment/05-review-fixes` | + fixes from the technical review | 4.4 ms | 65 ms | 159 ms | 0% | 2,007 us | 4.3 s |
 | `experiment/06-near-cache` | **+ local cache in front of Redis (winner)** | **2.3 ms** | **39 ms** | **92 ms** | **0%** | **1,847 us** | **4.3 s** |
-| `main` | winner + OAuth, observability, new endpoints | 3.2 ms | 81 ms | 213 ms | 0% | 2,148 us | 6.5 s |
+| `main` | winner + OAuth, observability, new endpoints | 2.4 ms | 49 ms | 152 ms | 0% | 1,902 us | 5.1 s |
 
 The local cache (branch 06) is the best configuration at every percentile, with the least CPU per request, in both
 rounds, and the only one under the statement's p95 threshold of 50 ms in both. `main` runs that same configuration
-plus the features the challenge asks for, which cost CPU; its two rounds also spread widely (p95 44 ms, then
-118 ms) on a host that was competing for CPU. Each branch is frozen at the measured code and can be run again with
+plus the features the challenge asks for, which cost about 10% more CPU per request than branch 06 measured in the
+same session; its p95 stays under 50 ms in both rounds (50 and 49 ms), its tail is longer (p99 127 and 178 ms). Each branch is frozen at the measured code and can be run again with
 `docker compose up --build`; the raw runs are in [perf/RESULTS.md](perf/RESULTS.md).
 
 The fixed rate changed one earlier conclusion. In the closed loop (each user waits for its answer before sending the

@@ -25,7 +25,7 @@ the same number of requests, so it compares directly.
 | 04 Quarkus reactive + Redis | 3.9 ms | 57 ms | 208 ms | 0% | 81 | 1,887 us | 4.4 s |
 | 05 Review fixes, Redis | 4.4 ms | 65 ms | 159 ms | 0% | 0 | 2,007 us | 4.3 s |
 | **06 Local cache + Redis** | **2.3 ms** | **39 ms** | **92 ms** | **0%** | **0** | **1,847 us** | **4.3 s** |
-| `main`: 06 + OAuth, observability, new endpoints | 3.2 ms | 81 ms | 213 ms | 0% | 0 | 2,148 us | 6.5 s |
+| `main`: 06 + OAuth, observability, new endpoints | 2.4 ms | 49 ms | 152 ms | 0% | 113 | 1,902 us | 5.1 s |
 
 Per round:
 
@@ -45,6 +45,13 @@ Per round:
 | r2-05 | 5.3 ms | 84 ms | 219 ms | 575 ms | 0% | 0 | 2,063 us |
 | r2-06 | 2.6 ms | 45 ms | 107 ms | 683 ms | 0% | 0 | 1,909 us |
 | r2-main | 3.7 ms | 118 ms | 322 ms | 928 ms | 0% | 0 | 2,274 us |
+| lean1-06 | 2.0 ms | 34 ms | 82 ms | 399 ms | 0% | 0 | 1,835 us |
+| lean1-main | 2.7 ms | 50 ms | 127 ms | 446 ms | 0% | 0 | 1,961 us |
+| lean2-06 | 1.4 ms | 23 ms | 61 ms | 219 ms | 0% | 0 | 1,622 us |
+| lean2-main | 2.1 ms | 49 ms | 178 ms | 1,316 ms | 0% | 113 | 1,843 us |
+
+The `main` row comes from the `lean` runs: `main` after the changes in [Leaner `main`](#leaner-main), alternated with
+branch 06 as control in one session, with Keycloak running. The r1-main and r2-main runs are the earlier `main`.
 
 Readings:
 
@@ -167,8 +174,31 @@ What each piece costs, per request, against a control of about 880 us:
 - **Keycloak** itself idles at under 1% CPU but holds about 500 MB, which on the 2 GB test machine leaves less room
   for everything else. It is not on the request path.
 
-The shipped `main` costs about 20% more CPU per request than branch 05, in exchange for authentication, the extra
-endpoints and observability.
+The `main` measured here cost about 20% more CPU per request than branch 05, in exchange for authentication, the
+extra endpoints and observability. The next section trims part of that.
+
+## Leaner `main`
+
+Three changes after the fixed-rate runs, none of them visible in the API:
+
+- **Token validation with SmallRye JWT instead of the OIDC extension.** The API only checks tokens signed by Keycloak
+  (signature from the JWKS endpoint, issuer, expiry, scope); it never logs users in, so the OIDC client was more than
+  it needs. Same Keycloak, same client credentials flow, same 401 and 403 answers.
+- **Fault-tolerance metrics off.** They were recorded on every Redis call; the circuit breaker logs its state changes.
+- **One validation per request.** The statement endpoints delegated to the `/v1` resource and validated the body a
+  second time; both resources now share one `ProductEndpoints` class.
+
+Alternated against branch 06 at 450 req/s, `main` with Keycloak running:
+
+| | median | p95 | p99 | App CPU per request |
+|---|---|---|---|---|
+| Branch 06 (average of lean1, lean2) | 1.7 ms | 28 ms | 71 ms | 1,728 us |
+| `main` before (r1, r2 against 06 r1, r2) | 3.2 ms | 81 ms | 213 ms | 2,148 us, +16% over 06 |
+| `main` now (lean1, lean2) | 2.4 ms | 49 ms | 152 ms | 1,902 us, +10% over 06 |
+
+What is left is authentication on the write endpoints, JSON logs with request ids, the cache counters and the
+paging code. The tail is still longer than on branch 06 (one of the two rounds dropped 113 iterations); Keycloak
+holds about 500 MB on the 2 GB machine, which leaves less room for the rest.
 
 ## Near cache on `main`
 
