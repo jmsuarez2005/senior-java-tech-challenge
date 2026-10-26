@@ -1,20 +1,15 @@
 package com.mango.products.adapters.out.redis;
 
-import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
 import org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException;
 import org.jboss.logging.Logger;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mango.products.application.port.out.ProductCache;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import io.quarkus.redis.datasource.value.ReactiveValueCommands;
 import io.smallrye.faulttolerance.api.Guard;
@@ -41,12 +36,9 @@ public class RedisProductCache implements ProductCache {
 
 	private final ReactiveRedisDataSource redis;
 	private final ReactiveValueCommands<String, String> values;
-	private final ObjectMapper json;
+	private final CachedProductCodec codec;
 	private final String ttlSeconds;
-	private final Counter hits;
-	private final Counter misses;
-	private final Counter readErrors;
-	private final Counter writeErrors;
+	private final CacheMetrics metrics;
 
 	private final Guard redisCircuit = Guard.create()
 			.withDescription("redis-product-cache")
@@ -58,24 +50,21 @@ public class RedisProductCache implements ProductCache {
 				.done()
 			.build();
 
-	public RedisProductCache(ReactiveRedisDataSource redis, ObjectMapper json, Duration ttl, MeterRegistry meters) {
+	public RedisProductCache(ReactiveRedisDataSource redis, CachedProductCodec codec, Duration ttl, CacheMetrics metrics) {
 		this.redis = redis;
 		this.values = redis.value(String.class);
-		this.json = json;
+		this.codec = codec;
 		this.ttlSeconds = Long.toString(ttl.toSeconds());
-		this.hits = meters.counter("products.cache.reads", "result", "hit");
-		this.misses = meters.counter("products.cache.reads", "result", "miss");
-		this.readErrors = meters.counter("products.cache.reads", "result", "error");
-		this.writeErrors = meters.counter("products.cache.writes", "result", "error");
+		this.metrics = metrics;
 	}
 
 	@Override
 	public Uni<Product> get(ProductId id) {
 		return redisCircuit.get(() -> values.get(key(id)), UNI_STRING)
-				.onItem().invoke(value -> (value == null ? misses : hits).increment())
-				.onItem().ifNotNull().transform(value -> read(value).toDomain())
+				.onItem().invoke(value -> metrics.read(value != null))
+				.onItem().ifNotNull().transform(codec::decode)
 				.onFailure().recoverWithItem(e -> {
-					readErrors.increment();
+					metrics.readFailed();
 					logFailure("read", id, e);
 					return null;
 				});
@@ -83,13 +72,13 @@ public class RedisProductCache implements ProductCache {
 
 	@Override
 	public Uni<Void> put(Product product) {
-		return redisCircuit.get(() -> Uni.createFrom().item(() -> write(CachedProduct.from(product)))
+		return redisCircuit.get(() -> Uni.createFrom().item(() -> codec.encode(product))
 						.chain(value -> redis.execute("EVAL", PUT_IF_NEWER, "1", key(product.id()), value,
 								Long.toString(product.version()), ttlSeconds))
 						.replaceWithVoid(), UNI_VOID)
 				.onFailure().call(e -> evict(product.id()))
 				.onFailure().recoverWithItem(e -> {
-					writeErrors.increment();
+					metrics.writeFailed();
 					logFailure("write", product.id(), e);
 					return null;
 				});
@@ -103,24 +92,6 @@ public class RedisProductCache implements ProductCache {
 	private static void logFailure(String operation, ProductId id, Throwable e) {
 		if (!(e instanceof CircuitBreakerOpenException)) {
 			log.warnf("Cache %s failed for product %s: %s", operation, id, e);
-		}
-	}
-
-	private CachedProduct read(String value) {
-		try {
-			return json.readValue(value, CachedProduct.class);
-		}
-		catch (JsonProcessingException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
-
-	private String write(CachedProduct product) {
-		try {
-			return json.writeValueAsString(product);
-		}
-		catch (JsonProcessingException e) {
-			throw new UncheckedIOException(e);
 		}
 	}
 

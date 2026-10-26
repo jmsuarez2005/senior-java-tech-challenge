@@ -18,6 +18,10 @@ public record Price(Money money, DateRange period) {
 		return money.currency().equals(other.money.currency()) && period.overlaps(other.period);
 	}
 
+	public boolean startsOn(LocalDate initDate, Currency currency) {
+		return money.currency().equals(currency) && period.initDate().equals(initDate);
+	}
+
 	public boolean appliesTo(LocalDate date, Currency currency) {
 		return money.currency().equals(currency) && period.contains(date);
 	}

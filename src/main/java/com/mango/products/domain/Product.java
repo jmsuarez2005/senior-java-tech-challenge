@@ -23,6 +23,10 @@ public record Product(ProductId id, String name, String description, List<Price>
 		return new Product(id, name, description, List.of(), 0);
 	}
 
+	public boolean hasPriceStartingOn(LocalDate initDate, Currency currency) {
+		return prices.stream().anyMatch(price -> price.startsOn(initDate, currency));
+	}
+
 	public Optional<Price> priceAt(LocalDate date, Currency currency) {
 		return prices.stream().filter(price -> price.appliesTo(date, currency)).findFirst();
 	}

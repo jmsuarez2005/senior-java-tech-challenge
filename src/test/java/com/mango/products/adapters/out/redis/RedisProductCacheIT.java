@@ -38,7 +38,8 @@ class RedisProductCacheIT {
 
 	@BeforeEach
 	void setUp() {
-		cache = new RedisProductCache(redis, json, Duration.ofMinutes(1), new SimpleMeterRegistry());
+		cache = new RedisProductCache(redis, new CachedProductCodec(json), Duration.ofMinutes(1),
+				new CacheMetrics(new SimpleMeterRegistry()));
 	}
 
 	@Test

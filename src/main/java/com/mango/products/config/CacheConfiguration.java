@@ -7,6 +7,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mango.products.adapters.out.nearcache.NearProductCache;
 import com.mango.products.adapters.out.nocache.DisabledProductCache;
+import com.mango.products.adapters.out.redis.CacheMetrics;
+import com.mango.products.adapters.out.redis.CachedProductCodec;
 import com.mango.products.adapters.out.redis.RedisProductCache;
 import com.mango.products.application.port.out.ProductCache;
 
@@ -30,7 +32,7 @@ class CacheConfiguration {
 		if (!enabled) {
 			return new DisabledProductCache();
 		}
-		ProductCache shared = new RedisProductCache(redis.get(), json, ttl, meters);
+		ProductCache shared = new RedisProductCache(redis.get(), new CachedProductCodec(json), ttl, new CacheMetrics(meters));
 		return localEnabled ? new NearProductCache(shared, localTtl, localMaxEntries) : shared;
 	}
 

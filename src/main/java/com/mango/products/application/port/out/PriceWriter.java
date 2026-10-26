@@ -10,13 +10,7 @@ import com.mango.products.domain.ProductId;
 
 import io.smallrye.mutiny.Uni;
 
-public interface ProductRepository {
-
-	ProductId nextId();
-
-	Uni<Product> create(Product product);
-
-	Uni<Product> findById(ProductId id);
+public interface PriceWriter {
 
 	Uni<Product> addPriceIfNoOverlap(ProductId id, Price price);
 
