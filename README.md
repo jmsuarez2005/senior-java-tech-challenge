@@ -1,5 +1,10 @@
 # Products API
 
+> **Experiment branch 1 of 6: `experiment/01-spring-webflux`.** Spring Boot 4 on WebFlux (Project Reactor), reactive MongoDB and a Redis cache.
+> The code is frozen as it was measured; the comparison of all branches is in the README on `main`.
+> Run it in its measured configuration with `PRODUCTS_CACHE_ENABLED=true docker compose --profile cache up --build`. Swagger UI: `http://localhost:8080/swagger-ui.html`;
+> the API document (springdoc): `http://localhost:8080/v3/api-docs`.
+
 Products with historical prices. A product can have many prices over time, but only one price in force per day
 and currency. Built with Spring Boot 4 on WebFlux, reactive MongoDB and a Redis cache.
 
