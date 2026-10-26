@@ -34,6 +34,8 @@ import jakarta.ws.rs.core.UriInfo;
 @ApplicationScoped
 class ProductEndpoints {
 
+	static final String REQUIRED_BODY = "request body is required";
+
 	private final CreateProduct createProduct;
 	private final FindProduct findProduct;
 	private final AddPrice addPrice;

@@ -26,6 +26,10 @@ public class PriceRequestValidator implements ConstraintValidator<ValidPrice, Ad
 		if (!Money.hasMinorUnit(currency)) {
 			valid = reject(context, "currency", currency + " has no minor unit");
 		}
+		else if (request.value() != null && !Money.fitsInMinorUnits(request.value(), currency)) {
+			valid = reject(context, "value", "must have at most " + Money.MAX_DIGITS + " digits in " + currency
+					+ " minor units");
+		}
 		else if (request.value() != null && !Money.isRepresentable(request.value(), currency)) {
 			valid = reject(context, "value", "must have at most " + currency.getDefaultFractionDigits()
 					+ " decimals for " + currency);

@@ -176,6 +176,41 @@ class ProductApiIT {
 	}
 
 	@Test
+	void explainsWhyAHugeValueIsRejected() {
+		String id = createProduct();
+
+		expectProblem(json().body("{\"value\": 1e10000000, \"initDate\": \"2024-01-01\"}")
+				.post("/v1/products/{id}/prices", id).then(), 400)
+				.body("errors[0].message", equalTo("must have at most 18 digits in EUR minor units"));
+	}
+
+	@ParameterizedTest(name = "{0}")
+	@CsvSource(delimiter = '|', textBlock = """
+			value is text          | {"value": "abc", "initDate": "2024-01-01"}                    | value
+			date in another format | {"value": 10, "initDate": "01/01/2024"}                       | initDate
+			unknown currency       | {"value": 10, "initDate": "2024-01-01", "currency": "XXZ"}    | currency
+			""")
+	void namesTheFieldThatCannotBeRead(String scenario, String body, String field) {
+		String id = createProduct();
+
+		expectProblem(json().body(body).post("/products/{id}/prices", id).then(), 400)
+				.body("errors[0].field", equalTo(field));
+	}
+
+	@Test
+	void answersUnreadableRequestsWithProblemDetails() {
+		String id = createProduct();
+
+		expectProblem(json().body("{\"name\":").post("/products").then(), 400)
+				.body("detail", equalTo("Malformed request body"));
+		expectProblem(json().post("/products").then(), 400)
+				.body("errors[0].field", equalTo("body"));
+		expectProblem(json().post("/products/{id}/prices", id).then(), 400)
+				.body("errors[0].field", equalTo("body"));
+		expectProblem(given().contentType(ContentType.TEXT).body("name").post("/products").then(), 415);
+	}
+
+	@Test
 	void reportsAllViolationsAndStoresNothing() {
 		String id = createProduct();
 

@@ -5,6 +5,8 @@ import java.util.List;
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException.Reference;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.mango.products.adapters.in.web.Problem.FieldViolation;
 import com.mango.products.domain.DomainException;
 import com.mango.products.domain.DomainValidationException;
@@ -15,6 +17,7 @@ import com.mango.products.domain.ProductNotFoundException;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Path;
+import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.Response.Status;
 import jakarta.ws.rs.core.UriInfo;
@@ -22,6 +25,7 @@ import jakarta.ws.rs.core.UriInfo;
 public class ApiExceptionMappers {
 
 	private static final String VALIDATION_FAILED = "Request validation failed";
+	private static final String MALFORMED_BODY = "Malformed request body";
 
 	@ServerExceptionMapper
 	public Response domain(DomainException exception, UriInfo uri) {
@@ -43,9 +47,36 @@ public class ApiExceptionMappers {
 		return Problem.response(Status.BAD_REQUEST, VALIDATION_FAILED, uri.getPath(), violations);
 	}
 
+	// Replaces the Quarkus default, which answers a field of the wrong type with a plain-text body.
+	@ServerExceptionMapper
+	public Response invalidField(MismatchedInputException exception, UriInfo uri) {
+		String field = exception.getPath().stream()
+				.map(Reference::getFieldName)
+				.filter(name -> name != null)
+				.reduce((first, second) -> second)
+				.orElse(null);
+		if (field == null) {
+			return Problem.response(Status.BAD_REQUEST, MALFORMED_BODY, uri.getPath());
+		}
+		return Problem.response(Status.BAD_REQUEST, VALIDATION_FAILED, uri.getPath(),
+				List.of(new FieldViolation(field, "has an invalid value or format")));
+	}
+
 	@ServerExceptionMapper
 	public Response unreadableBody(JsonProcessingException exception, UriInfo uri) {
-		return Problem.response(Status.BAD_REQUEST, "Malformed request body", uri.getPath());
+		return Problem.response(Status.BAD_REQUEST, MALFORMED_BODY, uri.getPath());
+	}
+
+	// Client errors raised by the framework itself (unparseable JSON, unsupported media type) get the same format.
+	@ServerExceptionMapper
+	public Response clientError(WebApplicationException exception, UriInfo uri) {
+		Response response = exception.getResponse();
+		if (response.getStatus() >= 500) {
+			return response;
+		}
+		Status status = Status.fromStatusCode(response.getStatus());
+		String detail = status == Status.BAD_REQUEST ? MALFORMED_BODY : status.getReasonPhrase();
+		return Problem.response(status, detail, uri.getPath());
 	}
 
 	// Violations come as "method.argument.field"; clients only care about the field.

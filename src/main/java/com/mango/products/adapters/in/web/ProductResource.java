@@ -28,6 +28,7 @@ import com.mango.products.adapters.in.web.dto.ReplacePriceRequest;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.DefaultValue;
@@ -70,8 +71,8 @@ public class ProductResource {
 			headers = @Header(name = "Location", description = "URL of the new product", schema = @Schema(type = SchemaType.STRING)),
 			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
 	@APIResponse(responseCode = "400", ref = "BadRequest")
-	public Uni<Response> create(@Valid CreateProductRequest request, @Context UriInfo uri) {
-		return endpoints.create(request, uri);
+	public Uni<Response> create(@NotNull(message = ProductEndpoints.REQUIRED_BODY) @Valid CreateProductRequest body, @Context UriInfo uri) {
+		return endpoints.create(body, uri);
 	}
 
 	@GET
@@ -97,8 +98,8 @@ public class ProductResource {
 	@APIResponse(responseCode = "404", ref = "NotFound")
 	@APIResponse(responseCode = "409", ref = "Conflict")
 	public Uni<PriceResponse> addPrice(@Parameter(description = ID) @PathParam("id") String id,
-			@Valid AddPriceRequest request) {
-		return endpoints.addPrice(id, request);
+			@NotNull(message = ProductEndpoints.REQUIRED_BODY) @Valid AddPriceRequest body) {
+		return endpoints.addPrice(id, body);
 	}
 
 	@GET
@@ -160,8 +161,8 @@ public class ProductResource {
 	public Uni<PriceResponse> replacePrice(@Parameter(description = ID) @PathParam("id") String id,
 			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
 			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate,
-			@Valid ReplacePriceRequest request) {
-		return endpoints.replacePrice(id, currency, initDate, request);
+			@NotNull(message = ProductEndpoints.REQUIRED_BODY) @Valid ReplacePriceRequest body) {
+		return endpoints.replacePrice(id, currency, initDate, body);
 	}
 
 	@DELETE

@@ -20,6 +20,7 @@ import com.mango.products.adapters.in.web.dto.ProductResponse;
 
 import io.smallrye.mutiny.Uni;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
@@ -56,8 +57,8 @@ public class ChallengeResource {
 			headers = @Header(name = "Location", description = "URL of the new product", schema = @Schema(type = SchemaType.STRING)),
 			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
 	@APIResponse(responseCode = "400", ref = "BadRequest")
-	public Uni<Response> create(@Valid CreateProductRequest request, @Context UriInfo uri) {
-		return endpoints.create(request, uri);
+	public Uni<Response> create(@NotNull(message = ProductEndpoints.REQUIRED_BODY) @Valid CreateProductRequest body, @Context UriInfo uri) {
+		return endpoints.create(body, uri);
 	}
 
 	@POST
@@ -71,8 +72,8 @@ public class ChallengeResource {
 	@APIResponse(responseCode = "404", ref = "NotFound")
 	@APIResponse(responseCode = "409", ref = "Conflict")
 	public Uni<PriceResponse> addPrice(@Parameter(description = ID) @PathParam("id") String id,
-			@Valid AddPriceRequest request) {
-		return endpoints.addPrice(id, request);
+			@NotNull(message = ProductEndpoints.REQUIRED_BODY) @Valid AddPriceRequest body) {
+		return endpoints.addPrice(id, body);
 	}
 
 	@GET

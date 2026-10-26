@@ -9,7 +9,7 @@ import java.util.OptionalLong;
 public record Money(long amountMinor, Currency currency) {
 
 	// Any number with up to 18 digits fits in a long.
-	private static final int MAX_DIGITS = 18;
+	public static final int MAX_DIGITS = 18;
 
 	public Money {
 		Objects.requireNonNull(currency, "currency");
@@ -33,6 +33,11 @@ public record Money(long amountMinor, Currency currency) {
 		return hasMinorUnit(currency) && toMinorUnits(value, currency.getDefaultFractionDigits()).isPresent();
 	}
 
+	public static boolean fitsInMinorUnits(BigDecimal value, Currency currency) {
+		return hasMinorUnit(currency)
+				&& minorUnitDigits(value.stripTrailingZeros(), currency.getDefaultFractionDigits()) <= MAX_DIGITS;
+	}
+
 	public BigDecimal toDecimal() {
 		return BigDecimal.valueOf(amountMinor, fractionDigits(currency));
 	}
@@ -48,11 +53,15 @@ public record Money(long amountMinor, Currency currency) {
 	private static OptionalLong toMinorUnits(BigDecimal value, int fractionDigits) {
 		BigDecimal stripped = value.stripTrailingZeros();
 		boolean tooManyDecimals = stripped.scale() > fractionDigits;
-		boolean tooLarge = stripped.precision() - stripped.scale() + fractionDigits > MAX_DIGITS;
+		boolean tooLarge = minorUnitDigits(stripped, fractionDigits) > MAX_DIGITS;
 		if (tooManyDecimals || tooLarge) {
 			return OptionalLong.empty();
 		}
 		return OptionalLong.of(stripped.setScale(fractionDigits, RoundingMode.UNNECESSARY).unscaledValue().longValueExact());
+	}
+
+	private static long minorUnitDigits(BigDecimal stripped, int fractionDigits) {
+		return (long) stripped.precision() - stripped.scale() + fractionDigits;
 	}
 
 }
