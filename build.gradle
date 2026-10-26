@@ -1,5 +1,6 @@
 plugins {
 	id 'java'
+	id 'jacoco'
 	id 'io.quarkus' version '3.40.1'
 }
 
@@ -39,6 +40,7 @@ dependencies {
 	implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
 
 	testImplementation 'io.quarkus:quarkus-junit5'
+	testImplementation 'io.quarkus:quarkus-jacoco'
 	testImplementation 'io.rest-assured:rest-assured'
 	testImplementation 'io.quarkus:quarkus-smallrye-jwt-build'
 	testImplementation 'org.assertj:assertj-core:3.27.7'
@@ -53,8 +55,18 @@ tasks.withType(JavaCompile).configureEach {
 	options.compilerArgs << '-parameters'
 }
 
+// One coverage report for plain and Quarkus tests: the JaCoCo agent covers the plain ones and quarkus-jacoco, which
+// instruments Quarkus' class loader, adds to the same data file and writes the report to build/jacoco-report.
 tasks.named('test') {
 	systemProperty 'java.util.logging.manager', 'org.jboss.logmanager.LogManager'
+	jacoco {
+		excludeClassLoaders = ['*QuarkusClassLoader']
+		destinationFile = layout.buildDirectory.file('jacoco-quarkus.exec').get().asFile
+	}
+}
+
+tasks.named('jacocoTestReport') {
+	enabled = false
 }
 
 tasks.register('functionalTest', Test) {
