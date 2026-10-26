@@ -21,6 +21,7 @@ class ArchitectureTest {
 			.adapter("persistence", "..adapters.out.mongo..")
 			.adapter("cache", "..adapters.out.redis..")
 			.adapter("no-cache", "..adapters.out.nocache..")
+			.adapter("near-cache", "..adapters.out.nearcache..")
 			.withOptionalLayers(true)
 			// config is the composition root: the one place allowed to pick adapters.
 			.ignoreDependency(resideInAPackage("..config.."), alwaysTrue());

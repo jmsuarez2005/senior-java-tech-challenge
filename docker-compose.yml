@@ -12,6 +12,7 @@ services:
       MONGODB_URI: mongodb://mongo:27017/products
       REDIS_URL: redis://redis:6379
       PRODUCTS_CACHE_ENABLED: ${PRODUCTS_CACHE_ENABLED:-true}
+      PRODUCTS_LOCAL_CACHE_ENABLED: ${PRODUCTS_LOCAL_CACHE_ENABLED:-true}
       PRODUCTS_AUTH_ALL: ${PRODUCTS_AUTH_ALL:-false}
       OIDC_AUTH_SERVER_URL: http://keycloak:8080/realms/products
     depends_on:
