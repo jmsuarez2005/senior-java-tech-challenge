@@ -14,7 +14,6 @@ COPY --from=build --chown=app:app /workspace/build/quarkus-app ./
 RUN chown app:app /app
 USER app
 ENV JAVA_OPTS="-XX:+UseSerialGC -XX:MaxRAMPercentage=75 -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile=/app/app.jsa"
-# CDS training run: start, then stop gracefully so the archive is written on exit
 RUN timeout -s TERM 15 java $JAVA_OPTS -jar quarkus-run.jar > /dev/null 2>&1; test -f /app/app.jsa
 EXPOSE 8080
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar quarkus-run.jar"]

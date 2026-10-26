@@ -13,8 +13,6 @@ services:
       PRODUCTS_LOCAL_CACHE_ENABLED: ${PRODUCTS_LOCAL_CACHE_ENABLED:-true}
       PRODUCTS_AUTH_ALL: ${PRODUCTS_AUTH_ALL:-false}
       JWT_JWKS_URL: http://keycloak:8080/realms/products/protocol/openid-connect/certs
-    # Not Keycloak: tokens are checked against its public keys, fetched on the first protected call, so the API
-    # starts in seconds instead of waiting minutes for the authorization server.
     depends_on:
       mongo:
         condition: service_healthy
@@ -53,7 +51,6 @@ services:
           cpus: '0.5'
           memory: 1G
 
-  # Loads the dummy catalogue in seed/catalog.json, then exits; the API starts after it.
   catalog:
     image: mongo:8.0
     container_name: product-catalog
@@ -95,7 +92,6 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      # Tokens carry this issuer whoever asks for them; the app reaches Keycloak through the backchannel name.
       KC_HOSTNAME: http://localhost:8180
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HEALTH_ENABLED: "true"
