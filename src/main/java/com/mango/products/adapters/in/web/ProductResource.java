@@ -129,11 +129,11 @@ public class ProductResource {
 			@Parameter(description = CURRENCY) @QueryParam("currency") @DefaultValue(ApiDefaults.CURRENCY_CODE) String currency,
 			@Parameter(description = "Only prices in force on or after this day (yyyy-MM-dd)") @QueryParam("from") String from,
 			@Parameter(description = "Only prices in force on or before this day (yyyy-MM-dd)") @QueryParam("to") String to,
-			@Parameter(description = "initDate,asc or initDate,desc") @QueryParam("sort") @DefaultValue("initDate,asc") String sort,
+			@Parameter(description = "initDate,asc or initDate,desc") @QueryParam("sort") @DefaultValue(HistoryParams.DEFAULT_SORT) String sort,
 			@Parameter(description = "Zero-based page number") @QueryParam("page") @DefaultValue("0") int page,
 			@Parameter(description = "Page size, 1 to 500; leave out to get the whole history") @QueryParam("size") @DefaultValue("0") int size,
 			@Context UriInfo uri) {
-		return endpoints.prices(id, date, currency, from, to, sort, page, size, uri);
+		return endpoints.prices(id, date, currency, new HistoryParams(from, to, sort, page, size), uri);
 	}
 
 	@GET

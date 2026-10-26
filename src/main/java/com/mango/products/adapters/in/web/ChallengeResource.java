@@ -88,7 +88,7 @@ public class ChallengeResource {
 			@Parameter(description = "ISO 4217 currency code (multi-currency bonus)") @QueryParam("currency")
 			@DefaultValue(ApiDefaults.CURRENCY_CODE) String currency,
 			@Context UriInfo uri) {
-		return endpoints.prices(id, date, currency, null, null, "initDate,asc", 0, 0, uri);
+		return endpoints.prices(id, date, currency, HistoryParams.WHOLE_HISTORY, uri);
 	}
 
 }

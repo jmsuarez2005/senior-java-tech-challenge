@@ -10,6 +10,8 @@ import jakarta.ws.rs.core.Response;
 record Problem(String title, int status, String detail, String instance, List<FieldViolation> errors) {
 
 	static final String MEDIA_TYPE = "application/problem+json";
+	static final String VALIDATION_FAILED = "Request validation failed";
+	static final String MALFORMED_BODY = "Malformed request body";
 
 	record FieldViolation(String field, String message) {
 	}

@@ -1,7 +1,5 @@
 package com.mango.products.adapters.in.web;
 
-import java.time.LocalDate;
-import java.util.Currency;
 import java.util.List;
 
 import com.mango.products.adapters.in.web.dto.AddPriceRequest;
@@ -18,15 +16,12 @@ import com.mango.products.application.FindPriceInForce;
 import com.mango.products.application.FindProduct;
 import com.mango.products.application.RemovePrice;
 import com.mango.products.application.ReplacePrice;
-import com.mango.products.domain.DateRange;
-import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.ws.rs.core.EntityTag;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 
@@ -61,7 +56,7 @@ class ProductEndpoints {
 
 	Uni<Response> get(String id) {
 		return findProduct.execute(new ProductId(id))
-				.map(product -> Response.ok(ProductResponse.from(product)).tag(versionTag(product)).build());
+				.map(product -> Response.ok(ProductResponse.from(product)).tag(VersionTag.of(product)).build());
 	}
 
 	Uni<PriceResponse> addPrice(String id, AddPriceRequest request) {
@@ -76,36 +71,32 @@ class ProductEndpoints {
 				.map(PriceValueResponse::from);
 	}
 
-	Uni<Response> prices(String id, String date, String currency, String from, String to, String sort, int page,
-			int size, UriInfo uri) {
+	Uni<Response> prices(String id, String date, String currency, HistoryParams params, UriInfo uri) {
 		if (date != null) {
 			return priceInForce(id, date, currency).map(value -> Response.ok(value).build());
 		}
-		return Uni.createFrom().item(() -> RequestParams.historyQuery(currency, from, to, sort, page, size))
+		return Uni.createFrom().item(() -> RequestParams.historyQuery(currency, params))
 				.chain(query -> findProduct.execute(new ProductId(id)).map(product -> history(product, query, uri)));
 	}
 
 	Uni<Response> replacePrice(String id, String currency, String initDate, String ifMatch, ReplacePriceRequest request) {
-		return Uni.createFrom().item(() -> {
-			Currency code = RequestParams.currency(currency);
-			LocalDate start = RequestParams.requiredDate("initDate", initDate);
-			return new Price(Money.of(request.value(), code), new DateRange(start, request.endDate()));
-		})
-				.chain(price -> replacePrice.execute(new ProductId(id), price, RequestParams.expectedVersion(ifMatch))
-						.map(product -> Response.ok(PriceResponse.from(price)).tag(versionTag(product)).build()));
+		return Uni.createFrom().item(() -> request.toPrice(RequestParams.currency(currency),
+				RequestParams.requiredDate("initDate", initDate)))
+				.chain(price -> replacePrice.execute(new ProductId(id), price, VersionTag.expectedVersion(ifMatch))
+						.map(product -> Response.ok(PriceResponse.from(price)).tag(VersionTag.of(product)).build()));
 	}
 
 	Uni<Response> removePrice(String id, String currency, String initDate, String ifMatch) {
 		return Uni.createFrom().item(() -> RequestParams.currency(currency))
 				.chain(code -> removePrice.execute(new ProductId(id), code, RequestParams.requiredDate("initDate", initDate),
-						RequestParams.expectedVersion(ifMatch)))
-				.map(product -> Response.noContent().tag(versionTag(product)).build());
+						VersionTag.expectedVersion(ifMatch)))
+				.map(product -> Response.noContent().tag(VersionTag.of(product)).build());
 	}
 
 	private static Response history(Product product, HistoryQuery query, UriInfo uri) {
 		List<Price> matching = query.matching(product);
 		Response.ResponseBuilder response = Response.ok(PriceHistoryResponse.from(product, query.pageOf(matching)))
-				.tag(versionTag(product));
+				.tag(VersionTag.of(product));
 		if (query.paginated()) {
 			response.header("X-Total-Count", matching.size());
 			if (query.page() > 0) {
@@ -116,10 +107,6 @@ class ProductEndpoints {
 			}
 		}
 		return response.build();
-	}
-
-	private static EntityTag versionTag(Product product) {
-		return new EntityTag(Long.toString(product.version()));
 	}
 
 }
