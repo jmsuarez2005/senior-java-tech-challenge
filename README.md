@@ -554,8 +554,8 @@ on where it exists). Averages of the two rounds:
 | Branch | Configuration | median | p95 | p99 | Errors | App CPU per request | Startup |
 |---|---|---|---|---|---|---|---|
 | `experiment/01-spring-webflux` | Spring Boot 4, WebFlux + Redis | 12.1 ms | 151 ms | 316 ms | 0% | 2,971 us | 10.5 s |
-| `experiment/02-spring-mvc-virtual-threads` | Spring Boot 4, MVC, virtual threads + Redis | 33.9 ms | 851 ms | 1,478 ms | 2.5% | 2,999 us | 12.4 s |
-| `experiment/03-quarkus-virtual-threads` | Quarkus 3, virtual threads + Redis | 7.2 ms | 114 ms | 1,204 ms | 0.9% | 2,212 us | 4.1 s |
+| `experiment/02-spring-mvc-virtual-threads` | Spring Boot 4, MVC, virtual threads + Redis | 73.7 ms | 735 ms | 1,126 ms | 0% | 3,088 us | 11.4 s |
+| `experiment/03-quarkus-virtual-threads` | Quarkus 3, virtual threads + Redis | 5.6 ms | 54 ms | 132 ms | 0% | 2,190 us | 4.4 s |
 | `experiment/04-quarkus-reactive` | Quarkus 3, reactive (Mutiny) + Redis | 3.9 ms | 57 ms | 208 ms | 0% | 1,887 us | 4.4 s |
 | `experiment/05-review-fixes` | + fixes from the technical review | 4.4 ms | 65 ms | 159 ms | 0% | 2,007 us | 4.3 s |
 | `experiment/06-near-cache` | **+ local cache in front of Redis (winner)** | **2.3 ms** | **39 ms** | **92 ms** | **0%** | **1,847 us** | **4.3 s** |
@@ -569,8 +569,15 @@ plus the features the challenge asks for, which cost CPU; its two rounds also sp
 
 The fixed rate changed one earlier conclusion. In the closed loop (each user waits for its answer before sending the
 next request), Spring MVC on virtual threads served more requests than WebFlux. Under a fixed 450 requests per
-second it could not keep up: requests queued, 2.5% failed and p99 passed one second, while WebFlux absorbed the same
-load without errors. Quarkus reactive won under both models.
+second it could not keep up: requests queued, k6 had to drop about 2,300 it could not send in time and p99 passed one
+second, while WebFlux absorbed the same load. On Quarkus, virtual threads and the reactive model ended up close at
+this rate; the local cache is what separates the winner.
+
+No configuration returned errors. A first round of this comparison showed 0.9 to 2.5% failed price writes for the two
+slowest configurations; they came from the load-test script, not the app: it derived each write's dates from the
+k6 virtual-user number, and when a slow server made k6 start more than about 290 users the dates went past year 9999
+and the API rightly answered 400. The script now uses a global counter, and both configurations were measured again
+(the rows above).
 
 Throughput in the closed loop, measured earlier on a healthier machine, for reference: WebFlux about 1,060 req/s,
 MVC with virtual threads 1,330, Quarkus with virtual threads 1,790, Quarkus reactive 1,980, with the review fixes

@@ -11,7 +11,7 @@
 
 - Every experiment has its own branch (`experiment/01-...` to `experiment/06-...`) frozen at the measured code, so any row of `perf/RESULTS.md` can be run again; `main` carries the chosen design.
 - The in-process near cache (branch 06) is on `main` and on by default: it was the best result measured (+69% throughput in branch 06, +26% on `main`) and the challenge runs one instance. At a fixed arrival rate it is faster at every percentile (p99 -55%) and the only setup under p95 50 ms; the higher p99 seen in the closed loop came from more writes per second queueing in MongoDB. Its price is consistency across instances (each serves its own copy for up to 5 s after a change made elsewhere); that is documented with pros and cons, and `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off for distributed deployments.
-- Every configuration was compared again at one fixed arrival rate, in one session: the closed-loop ranking had placed Spring MVC with virtual threads above WebFlux, but at a fixed 450 req/s it saturated (2.5% errors) while WebFlux did not. The local cache won under both models.
+- Every configuration was compared again at one fixed arrival rate, in one session: the closed-loop ranking had placed Spring MVC with virtual threads above WebFlux, but at a fixed 450 req/s it saturated (k6 dropped about 2,300 requests it could not send in time, p99 above one second) while WebFlux did not. The local cache won under both models.
 - The load test has an open-model mode (`RATE=n`, constant arrival rate) next to the statement's closed loop: comparing configurations at the same load separates a faster component from the extra queueing its speed causes elsewhere.
 
 ## Architecture
@@ -115,4 +115,4 @@
 - JUnit default timeout of 60 s: a call that never returns fails the test instead of hanging the build.
 - k6 replaces the provided curl benchmark and keeps its service name and resource limits; it seeds through the API in `setup()` with batched requests, so the data goes through the same validation as real traffic.
 - Thresholds are scoped to the `mixed` scenario: seeding requests are not part of the measured load.
-- Load-test writes use a unique two-day window per (VU, iteration) in the future, so a 409 in the results always means a bug, never a test artifact.
+- Load-test writes use a unique two-day window per test iteration in the future, from k6's global iteration counter: deriving it from the VU number pushed dates past year 9999 when a slow server made k6 start many VUs, and the API rightly rejected them, so a 409 in the results always means a bug, never a test artifact.

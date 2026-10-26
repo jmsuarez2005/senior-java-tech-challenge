@@ -1,5 +1,6 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.1.0/index.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://app:8080';
@@ -103,9 +104,10 @@ function randomSeededDate() {
   return isoDate(start + days * DAY_MS);
 }
 
-// Every (VU, iteration) gets its own two-day window, so concurrent writes never overlap.
+// Every iteration of the test gets its own two-day window, so concurrent writes never overlap. The counter is global
+// and dense: deriving it from the VU number pushed dates past year 9999 when a slow server made k6 start many VUs.
 function uniqueFuturePrice() {
-  const slot = __VU * 5000 + __ITER;
+  const slot = exec.scenario.iterationInTest;
   const init = WRITE_EPOCH + slot * 2 * DAY_MS;
   return { value: 49.99, initDate: isoDate(init), endDate: isoDate(init + DAY_MS) };
 }

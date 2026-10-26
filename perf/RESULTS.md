@@ -12,15 +12,16 @@ out and run again with `docker compose up --build`. `main` carries the chosen de
 ### Same load for every configuration (fixed 450 req/s)
 
 Every branch and `main`, each in its best configuration (Redis on, local cache on where it exists), with the same
-k6 script in its open-model mode (`RATE=450`, 30 s ramp, 90 s steady), two interleaved rounds in one session.
+k6 script in its open-model mode (`RATE=450`, 30 s ramp, 90 s steady), two interleaved rounds in one session;
+branches 02 and 03 were measured again right after, with the corrected script (see the last reading).
 "App CPU per request" divides the app container's cgroup CPU time by all requests, seeding included; every run made
 the same number of requests, so it compares directly.
 
 | Branch | median | p95 | p99 | Errors | Dropped | App CPU per request | Startup |
 |---|---|---|---|---|---|---|---|
 | 01 Spring WebFlux + Redis | 12.1 ms | 151 ms | 316 ms | 0% | 3 | 2,971 us | 10.5 s |
-| 02 Spring MVC, virtual threads + Redis | 33.9 ms | 851 ms | 1,478 ms | 2.5% | 2,276 | 2,999 us | 12.4 s |
-| 03 Quarkus, virtual threads + Redis | 7.2 ms | 114 ms | 1,204 ms | 0.9% | 1,985 | 2,212 us | 4.1 s |
+| 02 Spring MVC, virtual threads + Redis | 73.7 ms | 735 ms | 1,126 ms | 0% | 2,313 | 3,088 us | 11.4 s |
+| 03 Quarkus, virtual threads + Redis | 5.6 ms | 54 ms | 132 ms | 0% | 0 | 2,190 us | 4.4 s |
 | 04 Quarkus reactive + Redis | 3.9 ms | 57 ms | 208 ms | 0% | 81 | 1,887 us | 4.4 s |
 | 05 Review fixes, Redis | 4.4 ms | 65 ms | 159 ms | 0% | 0 | 2,007 us | 4.3 s |
 | **06 Local cache + Redis** | **2.3 ms** | **39 ms** | **92 ms** | **0%** | **0** | **1,847 us** | **4.3 s** |
@@ -31,15 +32,15 @@ Per round:
 | Run | median | p95 | p99 | max | Errors | Dropped | App CPU per request |
 |---|---|---|---|---|---|---|---|
 | r1-01 | 12.4 ms | 155 ms | 349 ms | 470 ms | 0% | 0 | 2,991 us |
-| r1-02 | 48.7 ms | 1,293 ms | 1,916 ms | 5,883 ms | 2.67% | 1,913 | 3,115 us |
-| r1-03 | 7.3 ms | 146 ms | 2,123 ms | 3,846 ms | 1.72% | 1,985 | 2,271 us |
 | r1-04 | 3.0 ms | 52 ms | 294 ms | 758 ms | 0% | 81 | 1,812 us |
 | r1-05 | 3.5 ms | 46 ms | 99 ms | 364 ms | 0% | 0 | 1,951 us |
 | r1-06 | 1.9 ms | 33 ms | 77 ms | 289 ms | 0% | 0 | 1,785 us |
 | r1-main | 2.6 ms | 44 ms | 104 ms | 515 ms | 0% | 0 | 2,021 us |
 | r2-01 | 11.7 ms | 148 ms | 283 ms | 483 ms | 0% | 3 | 2,951 us |
-| r2-02 | 19.0 ms | 409 ms | 1,041 ms | 2,202 ms | 2.28% | 363 | 2,883 us |
-| r2-03 | 7.0 ms | 81 ms | 285 ms | 575 ms | 0% | 0 | 2,153 us |
+| fix1-02 | 122.3 ms | 993 ms | 1,365 ms | 3,084 ms | 0% | 1,890 | 3,223 us |
+| fix1-03 | 5.4 ms | 51 ms | 117 ms | 293 ms | 0% | 0 | 2,190 us |
+| fix2-02 | 25.0 ms | 476 ms | 887 ms | 1,180 ms | 0% | 423 | 2,952 us |
+| fix2-03 | 5.8 ms | 57 ms | 146 ms | 430 ms | 0% | 0 | 2,189 us |
 | r2-04 | 4.8 ms | 63 ms | 122 ms | 342 ms | 0% | 0 | 1,961 us |
 | r2-05 | 5.3 ms | 84 ms | 219 ms | 575 ms | 0% | 0 | 2,063 us |
 | r2-06 | 2.6 ms | 45 ms | 107 ms | 683 ms | 0% | 0 | 1,909 us |
@@ -48,11 +49,16 @@ Per round:
 Readings:
 
 - **The local cache (06) is the winner** at every percentile in both rounds, with the least CPU per request.
-- **Spring MVC on virtual threads cannot sustain 450 req/s** on one CPU: requests queue, k6 drops iterations and 2.5%
-  fail. In the closed loop it had looked better than WebFlux; a closed loop slows the senders down when the server
-  slows down, which hides saturation. WebFlux absorbed the same fixed load without errors.
-- **Quarkus with virtual threads** was fine in one round and saturated in the other (p99 2.1 s, 1.7% errors): it
-  runs close to its limit at this rate. The reactive version never did.
+- **Spring MVC on virtual threads cannot sustain 450 req/s** on one CPU: requests queue, k6 drops about 2,300
+  iterations it cannot send in time and p99 passes one second. In the closed loop it had looked better than WebFlux;
+  a closed loop slows the senders down when the server slows down, which hides saturation. WebFlux absorbed the same
+  fixed load.
+- **Quarkus with virtual threads and Quarkus reactive end up close** at this rate (p95 54 against 57 ms); they were
+  measured in different sessions, so the gap between them is within noise.
+- **Errors in the first measurement were a test bug.** Branches 02 and 03 were first measured with 0.9 to 2.5% failed
+  price writes. Every failure was a `400` for an invalid date: the script derived each write's dates from the k6
+  virtual-user number, and above about 290 users (only the slowest servers made k6 start that many) the dates passed
+  year 9999. The script now uses a global iteration counter; rows `fix1` and `fix2` replace the affected runs.
 - **`main` costs more than 06** because of the features on top, and its second round was noisy (the host was
   competing for CPU, see the caveats).
 
