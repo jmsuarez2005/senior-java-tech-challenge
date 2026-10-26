@@ -214,9 +214,10 @@ Hexagonal, with the dependency rule checked by ArchUnit on every build:
 ```
 adapters/in/web      ChallengeResource (statement paths) and ProductResource (/v1) over one ProductEndpoints;
                      request/response records, input validation, problem details, request ids
-application          one class per use case returning Mutiny Uni, plus the outbound ports ProductRepository and ProductCache
+application          one class per use case returning Mutiny Uni, plus the outbound ports ProductReader, ProductWriter,
+                     PriceWriter and ProductCache, split by the use cases that call them
 domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
-adapters/out/mongo   MongoDB document mapping and the ProductRepository implementation
+adapters/out/mongo   product and price document mappers, query filters, and the repository implementing the ports
 adapters/out/redis   the ProductCache implementation on Redis (adapters/out/nocache when the cache is off)
 adapters/out/nearcache  the in-process cache in front of it
 config               composition root: picks the cache implementation at startup
