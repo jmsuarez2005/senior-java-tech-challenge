@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Seeds products with one price per year, starting in 2020.
-# Usage: scripts/seed.sh [base-url] [products] [prices-per-product]
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
