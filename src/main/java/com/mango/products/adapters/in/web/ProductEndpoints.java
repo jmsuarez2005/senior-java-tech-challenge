@@ -26,6 +26,7 @@ import com.mango.products.domain.ProductId;
 
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.ws.rs.core.EntityTag;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 
@@ -60,8 +61,9 @@ class ProductEndpoints {
 						.build());
 	}
 
-	Uni<ProductResponse> get(String id) {
-		return findProduct.execute(new ProductId(id)).map(ProductResponse::from);
+	Uni<Response> get(String id) {
+		return findProduct.execute(new ProductId(id))
+				.map(product -> Response.ok(ProductResponse.from(product)).tag(versionTag(product)).build());
 	}
 
 	Uni<PriceResponse> addPrice(String id, AddPriceRequest request) {
@@ -86,24 +88,27 @@ class ProductEndpoints {
 				.chain(query -> findProduct.execute(new ProductId(id)).map(product -> history(product, query, uri)));
 	}
 
-	Uni<PriceResponse> replacePrice(String id, String currency, String initDate, ReplacePriceRequest request) {
+	Uni<Response> replacePrice(String id, String currency, String initDate, String ifMatch, ReplacePriceRequest request) {
 		return Uni.createFrom().item(() -> {
 			Currency code = RequestParams.currency(currency);
 			LocalDate start = RequestParams.requiredDate("initDate", initDate);
 			return new Price(Money.of(request.value(), code), new DateRange(start, request.endDate()));
 		})
-				.chain(price -> replacePrice.execute(new ProductId(id), price))
-				.map(PriceResponse::from);
+				.chain(price -> replacePrice.execute(new ProductId(id), price, RequestParams.expectedVersion(ifMatch))
+						.map(product -> Response.ok(PriceResponse.from(price)).tag(versionTag(product)).build()));
 	}
 
-	Uni<Void> removePrice(String id, String currency, String initDate) {
+	Uni<Response> removePrice(String id, String currency, String initDate, String ifMatch) {
 		return Uni.createFrom().item(() -> RequestParams.currency(currency))
-				.chain(code -> removePrice.execute(new ProductId(id), code, RequestParams.requiredDate("initDate", initDate)));
+				.chain(code -> removePrice.execute(new ProductId(id), code, RequestParams.requiredDate("initDate", initDate),
+						RequestParams.expectedVersion(ifMatch)))
+				.map(product -> Response.noContent().tag(versionTag(product)).build());
 	}
 
 	private static Response history(Product product, HistoryQuery query, UriInfo uri) {
 		List<Price> matching = query.matching(product);
-		Response.ResponseBuilder response = Response.ok(PriceHistoryResponse.from(product, query.pageOf(matching)));
+		Response.ResponseBuilder response = Response.ok(PriceHistoryResponse.from(product, query.pageOf(matching)))
+				.tag(versionTag(product));
 		if (query.paginated()) {
 			response.header("X-Total-Count", matching.size());
 			if (query.page() > 0) {
@@ -114,6 +119,10 @@ class ProductEndpoints {
 			}
 		}
 		return response.build();
+	}
+
+	private static EntityTag versionTag(Product product) {
+		return new EntityTag(Long.toString(product.version()));
 	}
 
 }

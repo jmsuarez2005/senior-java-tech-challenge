@@ -22,6 +22,7 @@ import static com.mongodb.client.model.Updates.set;
 import java.time.LocalDate;
 import java.util.Currency;
 import java.util.List;
+import java.util.OptionalLong;
 
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -33,6 +34,7 @@ import com.mango.products.domain.Price;
 import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.PriceOverlapException;
 import com.mango.products.domain.Product;
+import com.mango.products.domain.ProductChangedException;
 import com.mango.products.domain.ProductId;
 import com.mango.products.domain.ProductNotFoundException;
 import com.mongodb.client.model.FindOneAndUpdateOptions;
@@ -89,14 +91,15 @@ class MongoProductRepository implements ProductRepository {
 	}
 
 	@Override
-	public Uni<Product> replacePriceIfNoOverlap(ProductId id, Price price) {
+	public Uni<Product> replacePriceIfNoOverlap(ProductId id, Price price, OptionalLong expectedVersion) {
 		if (!ObjectId.isValid(id.value())) {
 			return Uni.createFrom().failure(new ProductNotFoundException(id));
 		}
 		Document newPrice = ProductDocumentMapper.toDocument(price);
 		Bson samePrice = samePrice(price.money().currency(), price.period().initDate());
 		Bson anyOtherOverlapping = and(overlapping(newPrice), ne(INIT_DATE, newPrice.getString(INIT_DATE)));
-		Bson existingAndWithoutOverlap = and(byId(id), elemMatch(PRICES, samePrice), not(elemMatch(PRICES, anyOtherOverlapping)));
+		Bson existingAndWithoutOverlap = and(byId(id, expectedVersion), elemMatch(PRICES, samePrice),
+				not(elemMatch(PRICES, anyOtherOverlapping)));
 		Bson replaceAndBumpVersion = combine(set(PRICES + ".$[p]", newPrice), inc(VERSION, 1L));
 		FindOneAndUpdateOptions options = new FindOneAndUpdateOptions()
 				.returnDocument(ReturnDocument.AFTER)
@@ -105,37 +108,39 @@ class MongoProductRepository implements ProductRepository {
 
 		return products.findOneAndUpdate(existingAndWithoutOverlap, replaceAndBumpVersion, options)
 				.onItem().ifNotNull().transform(ProductDocumentMapper::toDomain)
-				.onItem().ifNull().switchTo(() -> explainRejectedReplacement(id, price));
+				.onItem().ifNull().switchTo(() -> explainRejectedChange(id, price.money().currency(),
+						price.period().initDate(), expectedVersion, new PriceOverlapException(id, price)));
 	}
 
 	@Override
-	public Uni<Product> removePrice(ProductId id, Currency currency, LocalDate initDate) {
+	public Uni<Product> removePrice(ProductId id, Currency currency, LocalDate initDate, OptionalLong expectedVersion) {
 		if (!ObjectId.isValid(id.value())) {
 			return Uni.createFrom().failure(new ProductNotFoundException(id));
 		}
 		Bson samePrice = samePrice(currency, initDate);
 		Bson removeAndBumpVersion = combine(pull(PRICES, samePrice), inc(VERSION, 1L));
 
-		return products.findOneAndUpdate(and(byId(id), elemMatch(PRICES, samePrice)), removeAndBumpVersion, RETURN_UPDATED)
+		return products.findOneAndUpdate(and(byId(id, expectedVersion), elemMatch(PRICES, samePrice)), removeAndBumpVersion,
+				RETURN_UPDATED)
 				.onItem().ifNotNull().transform(ProductDocumentMapper::toDomain)
-				.onItem().ifNull().switchTo(() -> products.countDocuments(byId(id))
-						.chain(count -> Uni.createFrom().<Product>failure(count > 0
-								? PriceNotFoundException.startingOn(id, initDate, currency)
-								: new ProductNotFoundException(id))));
+				.onItem().ifNull().switchTo(() -> explainRejectedChange(id, currency, initDate, expectedVersion, null));
 	}
 
-	// Only runs when the replacement was rejected: one read to tell which of the three reasons applies.
-	private Uni<Product> explainRejectedReplacement(ProductId id, Price price) {
-		Currency currency = price.money().currency();
-		LocalDate initDate = price.period().initDate();
+	// Only runs when a change was rejected: one read to tell which reason applies. The price exists but the write was
+	// rejected only for an overlap, so a removal (which cannot overlap) passes no overlap.
+	private Uni<Product> explainRejectedChange(ProductId id, Currency currency, LocalDate initDate,
+			OptionalLong expectedVersion, PriceOverlapException overlap) {
 		return findById(id).chain(product -> {
 			if (product == null) {
 				return Uni.createFrom().failure(new ProductNotFoundException(id));
 			}
+			if (expectedVersion.isPresent() && product.version() != expectedVersion.getAsLong()) {
+				return Uni.createFrom().failure(new ProductChangedException(id, expectedVersion.getAsLong()));
+			}
 			boolean exists = product.prices().stream().anyMatch(
 					p -> p.money().currency().equals(currency) && p.period().initDate().equals(initDate));
-			return Uni.createFrom().failure(exists
-					? new PriceOverlapException(id, price)
+			return Uni.createFrom().failure(exists && overlap != null
+					? overlap
 					: PriceNotFoundException.startingOn(id, initDate, currency));
 		});
 	}
@@ -159,6 +164,10 @@ class MongoProductRepository implements ProductRepository {
 
 	private static Bson byId(ProductId id) {
 		return eq(ID, new ObjectId(id.value()));
+	}
+
+	private static Bson byId(ProductId id, OptionalLong expectedVersion) {
+		return expectedVersion.isPresent() ? and(byId(id), eq(VERSION, expectedVersion.getAsLong())) : byId(id);
 	}
 
 }

@@ -3,12 +3,18 @@ package com.mango.products.adapters.in.web;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Currency;
+import java.util.OptionalLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.mango.products.adapters.in.web.dto.HistoryQuery;
 import com.mango.products.domain.DomainValidationException;
 
 // JAX-RS turns an unconvertible query parameter into a 404; parsing here keeps it a 400 with the field name.
 final class RequestParams {
+
+	// The ETag this API sends: the product version as a strong entity tag, "3".
+	private static final Pattern VERSION_TAG = Pattern.compile("\"(\\d{1,18})\"");
 
 	private RequestParams() {
 	}
@@ -54,6 +60,18 @@ final class RequestParams {
 			throw new DomainValidationException("size", "must be between 1 and " + HistoryQuery.MAX_PAGE_SIZE);
 		}
 		return new HistoryQuery(currency(currency), fromDate, toDate, descending, page, size);
+	}
+
+	// No If-Match, or "*", means the change applies whatever the current version is.
+	static OptionalLong expectedVersion(String ifMatch) {
+		if (ifMatch == null || ifMatch.isBlank() || ifMatch.strip().equals("*")) {
+			return OptionalLong.empty();
+		}
+		Matcher tag = VERSION_TAG.matcher(ifMatch.strip());
+		if (!tag.matches()) {
+			throw new DomainValidationException("If-Match", "must be one ETag as returned by GET, such as \"3\"");
+		}
+		return OptionalLong.of(Long.parseLong(tag.group(1)));
 	}
 
 	static Currency currency(String code) {

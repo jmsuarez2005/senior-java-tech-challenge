@@ -12,6 +12,7 @@ import com.mango.products.domain.DomainException;
 import com.mango.products.domain.DomainValidationException;
 import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.PriceOverlapException;
+import com.mango.products.domain.ProductChangedException;
 import com.mango.products.domain.ProductNotFoundException;
 
 import jakarta.validation.ConstraintViolation;
@@ -36,6 +37,7 @@ public class ApiExceptionMappers {
 			case ProductNotFoundException e -> Problem.response(Status.NOT_FOUND, e.getMessage(), path);
 			case PriceNotFoundException e -> Problem.response(Status.NOT_FOUND, e.getMessage(), path);
 			case PriceOverlapException e -> Problem.response(Status.CONFLICT, e.getMessage(), path);
+			case ProductChangedException e -> Problem.response(Status.PRECONDITION_FAILED, e.getMessage(), path);
 		};
 	}
 

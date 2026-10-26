@@ -33,6 +33,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
@@ -58,6 +59,9 @@ public class ProductResource {
 	private static final String ID = "Product id, as returned when the product was created";
 	private static final String CURRENCY = "ISO 4217 currency code";
 	private static final String JSON = MediaType.APPLICATION_JSON;
+	private static final String ETAG = "The product's version; send it back in If-Match to change a price safely";
+	private static final String IF_MATCH = "Optional. The ETag read earlier: the change is rejected with 412 if the "
+			+ "product changed since";
 
 	private final ProductEndpoints endpoints;
 
@@ -79,9 +83,10 @@ public class ProductResource {
 	@Path("/{id}")
 	@Operation(summary = "Get a product", description = "Returns the product without its prices.")
 	@APIResponse(responseCode = "200", description = "The product",
+			headers = @Header(name = "ETag", description = ETAG, schema = @Schema(type = SchemaType.STRING)),
 			content = @Content(mediaType = JSON, schema = @Schema(implementation = ProductResponse.class)))
 	@APIResponse(responseCode = "404", ref = "NotFound")
-	public Uni<ProductResponse> get(@Parameter(description = ID) @PathParam("id") String id) {
+	public Uni<Response> get(@Parameter(description = ID) @PathParam("id") String id) {
 		return endpoints.get(id);
 	}
 
@@ -112,7 +117,8 @@ public class ProductResource {
 	@APIResponse(responseCode = "200", description = "The history, or the price in force when date is given",
 			headers = {
 					@Header(name = "X-Total-Count", description = "Prices matching the filters, when paging", schema = @Schema(type = SchemaType.INTEGER)),
-					@Header(name = "Link", description = "RFC 8288 links with rel=\"prev\" and rel=\"next\", when paging", schema = @Schema(type = SchemaType.STRING)) },
+					@Header(name = "Link", description = "RFC 8288 links with rel=\"prev\" and rel=\"next\", when paging", schema = @Schema(type = SchemaType.STRING)),
+					@Header(name = "ETag", description = ETAG + " (history only)", schema = @Schema(type = SchemaType.STRING)) },
 			content = @Content(mediaType = JSON,
 					schema = @Schema(oneOf = { PriceHistoryResponse.class, PriceValueResponse.class })))
 	@APIResponse(responseCode = "400", ref = "BadRequest")
@@ -152,34 +158,39 @@ public class ProductResource {
 			description = "The price is identified by its currency and initDate, which never change. Rejected if the new "
 					+ "period overlaps another price of the same currency. Requires a token with the products:write scope.")
 	@APIResponse(responseCode = "200", description = "Price replaced",
+			headers = @Header(name = "ETag", description = ETAG, schema = @Schema(type = SchemaType.STRING)),
 			content = @Content(mediaType = JSON, schema = @Schema(implementation = PriceResponse.class)))
 	@APIResponse(responseCode = "400", ref = "BadRequest")
 	@APIResponse(responseCode = "401", ref = "Unauthorized")
 	@APIResponse(responseCode = "403", ref = "Forbidden")
 	@APIResponse(responseCode = "404", ref = "NotFound")
 	@APIResponse(responseCode = "409", ref = "Conflict")
-	public Uni<PriceResponse> replacePrice(@Parameter(description = ID) @PathParam("id") String id,
+	@APIResponse(responseCode = "412", ref = "PreconditionFailed")
+	public Uni<Response> replacePrice(@Parameter(description = ID) @PathParam("id") String id,
 			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
 			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate,
+			@Parameter(description = IF_MATCH, example = "\"3\"") @HeaderParam("If-Match") String ifMatch,
 			@NotNull(message = ProductEndpoints.REQUIRED_BODY) @Valid ReplacePriceRequest body) {
-		return endpoints.replacePrice(id, currency, initDate, body);
+		return endpoints.replacePrice(id, currency, initDate, ifMatch, body);
 	}
 
 	@DELETE
 	@Path("/{id}/prices/{currency}/{initDate}")
 	@RolesAllowed(Scopes.WRITE)
 	@SecurityRequirement(name = Scopes.SCHEME, scopes = Scopes.WRITE)
-	@ResponseStatus(204)
 	@Operation(summary = "Delete a price", description = "Requires a token with the products:write scope.")
-	@APIResponse(responseCode = "204", description = "Price deleted")
+	@APIResponse(responseCode = "204", description = "Price deleted",
+			headers = @Header(name = "ETag", description = ETAG, schema = @Schema(type = SchemaType.STRING)))
 	@APIResponse(responseCode = "400", ref = "BadRequest")
 	@APIResponse(responseCode = "401", ref = "Unauthorized")
 	@APIResponse(responseCode = "403", ref = "Forbidden")
 	@APIResponse(responseCode = "404", ref = "NotFound")
-	public Uni<Void> removePrice(@Parameter(description = ID) @PathParam("id") String id,
+	@APIResponse(responseCode = "412", ref = "PreconditionFailed")
+	public Uni<Response> removePrice(@Parameter(description = ID) @PathParam("id") String id,
 			@Parameter(description = CURRENCY, example = "EUR") @PathParam("currency") String currency,
-			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate) {
-		return endpoints.removePrice(id, currency, initDate);
+			@Parameter(description = "First day of the price (yyyy-MM-dd)", example = "2024-01-01") @PathParam("initDate") String initDate,
+			@Parameter(description = IF_MATCH, example = "\"3\"") @HeaderParam("If-Match") String ifMatch) {
+		return endpoints.removePrice(id, currency, initDate, ifMatch);
 	}
 
 }

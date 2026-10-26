@@ -143,3 +143,37 @@ Feature: Changing and deleting prices needs an OAuth 2.0 token with the products
     * def claims = function(token) { return JSON.parse(new java.lang.String(Base64.getUrlDecoder().decode(token.split('.')[1]), 'UTF-8')) }
     * match claims(writerToken.token).scope contains 'products:write'
     * match claims(readerToken.token).scope !contains 'products:write'
+
+  @TC-089
+  Scenario: TC-089 A change based on an old ETag is rejected with 412 and writes nothing
+    Given url baseUrl
+    And path 'v1', 'products', id
+    When method get
+    Then status 200
+    * def etag = karate.response.header('ETag')
+    * match etag == '"2"'
+    Given url priceUrl
+    And header Authorization = 'Bearer ' + writerToken.token
+    And header If-Match = etag
+    And request { value: 89.99, endDate: '2024-06-30' }
+    When method put
+    Then status 200
+    And match karate.response.header('ETag') == '"3"'
+    Given url priceUrl
+    And header Authorization = 'Bearer ' + writerToken.token
+    And header If-Match = etag
+    And request { value: 1.99, endDate: '2024-06-30' }
+    When method put
+    Then status 412
+    And match header Content-Type contains 'application/problem+json'
+    And match response == problem
+    Given url priceUrl
+    And header Authorization = 'Bearer ' + writerToken.token
+    And header If-Match = etag
+    When method delete
+    Then status 412
+    Given url baseUrl
+    And path 'products', id, 'prices'
+    And param date = '2024-04-15'
+    When method get
+    Then match response == { value: 89.99 }

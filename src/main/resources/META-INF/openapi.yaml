@@ -47,6 +47,11 @@ info:
     Every error is an RFC 9457 problem (`application/problem+json`) with `title`, `status`, `detail` and `instance`.
     Validation errors add `errors`, one entry per offending field, all reported at once.
 
+    ## Concurrent changes
+    `GET /v1/products/{id}` and the history return an `ETag` with the product's version, which grows with every
+    change. Send it back in `If-Match` when changing or deleting a price: if someone changed the product in between,
+    the answer is `412` and nothing is written. Without `If-Match` the change applies unconditionally.
+
     ## Paging the history
     `GET /v1/products/{id}/prices` accepts `from`, `to`, `sort`, `page` and `size`. The body never changes shape:
     the total goes in `X-Total-Count` and the neighbouring pages in RFC 8288 `Link` headers.
@@ -134,3 +139,14 @@ components:
             status: 409
             detail: Product 65f0c0ffee0000000000beef already has a EUR price overlapping [2024-06-30, 2024-12-31]
             instance: /v1/products/65f0c0ffee0000000000beef/prices
+    PreconditionFailed:
+      description: The product changed after the version sent in If-Match was read
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Precondition Failed
+            status: 412
+            detail: Product 65f0c0ffee0000000000beef has changed since version 3
+            instance: /v1/products/65f0c0ffee0000000000beef/prices/EUR/2024-01-01

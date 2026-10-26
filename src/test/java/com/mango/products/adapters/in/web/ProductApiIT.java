@@ -261,6 +261,38 @@ class ProductApiIT {
 	}
 
 	@Test
+	void changesBasedOnAnOldETagAreRejected() {
+		String id = createProductWithStatementPrices();
+		String etag = given().get("/v1/products/{id}", id).then().statusCode(200)
+				.header("ETag", "\"2\"").extract().header("ETag");
+		given().get("/v1/products/{id}/prices", id).then().header("ETag", etag);
+
+		String next = authorized(WRITE_SCOPE).header("If-Match", etag).body(Map.of("value", 89.99, "endDate", "2024-06-30"))
+				.put("/v1/products/{id}/prices/EUR/2024-01-01", id).then()
+				.statusCode(200)
+				.header("ETag", "\"3\"").extract().header("ETag");
+
+		expectProblem(authorized(WRITE_SCOPE).header("If-Match", etag).body(Map.of("value", 1))
+				.put("/v1/products/{id}/prices/EUR/2024-01-01", id).then(), 412);
+		expectProblem(authorized(WRITE_SCOPE).header("If-Match", etag)
+				.delete("/v1/products/{id}/prices/EUR/2024-01-01", id).then(), 412);
+		authorized(WRITE_SCOPE).header("If-Match", next).delete("/v1/products/{id}/prices/EUR/2024-01-01", id).then()
+				.statusCode(204)
+				.header("ETag", "\"4\"");
+	}
+
+	@Test
+	void rejectsAnIfMatchThatIsNotOneOfOurETags() {
+		String id = createProductWithStatementPrices();
+
+		expectProblem(authorized(WRITE_SCOPE).header("If-Match", "W/\"2\"").body(Map.of("value", 1))
+				.put("/v1/products/{id}/prices/EUR/2024-01-01", id).then(), 400)
+				.body("errors[0].field", equalTo("If-Match"));
+		authorized(WRITE_SCOPE).header("If-Match", "*").body(Map.of("value", 1, "endDate", "2024-06-30"))
+				.put("/v1/products/{id}/prices/EUR/2024-01-01", id).then().statusCode(200);
+	}
+
+	@Test
 	void changingPricesNeedsATokenWithTheWriteScope() {
 		String id = createProductWithStatementPrices();
 
