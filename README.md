@@ -54,10 +54,21 @@ The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`
 
 ## API
 
-The API is versioned in the path: every endpoint lives under `/v1`. The statement's four mandatory endpoints are
-also served at their original, unversioned paths (`/products/...`), unchanged, because the automated tests call
-them there. Swagger UI documents `/v1` only. The full reference, with every parameter, schema, example and error, is
-in [Swagger UI](#swagger-ui); this section is the summary.
+The statement's four endpoints are served **exactly as specified, at their original paths**, because the
+recruiter's automated tests call them there; they never change. Next to them, the same API is versioned under
+`/v1` with the improvements. Both share one implementation, so they answer the same way. The full reference, with
+every parameter, schema, example and error, is in [Swagger UI](#swagger-ui), where each set is its own group.
+
+**Challenge endpoints** (unchanged):
+
+| Method | Path | Result |
+|---|---|---|
+| `POST` | `/products` | `201`, `Location` pointing to `/products/{id}`, body `{id, name, description}` |
+| `POST` | `/products/{id}/prices` | `201`, the created price |
+| `GET` | `/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
+| `GET` | `/products/{id}/prices` | `200`, `{name, description, prices: [...]}` ordered by `initDate` |
+
+**Products v1** (versioned, with the improvements):
 
 | Method | Path | Result |
 |---|---|---|
@@ -104,8 +115,8 @@ same verbs, same request and response bodies), so the automated tests pass uncha
 `theStatementsUnversionedPathsStillWork` checks it. Every improvement is added next to them, never in their place,
 and justified here:
 
-- `/v1` prefix on every endpoint, so a future incompatible change can ship as `/v2` next to it. The unversioned
-  `/products/...` paths answer exactly as the statement specifies and are kept for its tests.
+- `/v1` prefix for the versioned API, so a future incompatible change can ship as `/v2` next to it. The improvements
+  below live there; the challenge endpoints keep the statement's paths and behaviour.
 - `GET /v1/products/{id}/price?date=` is added as the RESTful way to ask for *the* price in force: it is a single
   resource, so the path is singular. `GET /v1/products/{id}/prices?date=` is kept because the automated tests
   use that form, and Swagger points to the singular one as preferred.
@@ -153,7 +164,8 @@ Errors follow RFC 9457 (`application/problem+json`):
 ## Swagger UI
 
 The API is documented with Swagger UI at **http://localhost:8080/swagger-ui**, and that page is the complete
-reference: the overview at the top explains the rules (closed intervals, currencies and decimals, no overlap),
+reference. Endpoints come in two groups: **Challenge endpoints**, the statement's four, unchanged, and **Products**,
+the versioned `/v1` API with the improvements. The overview at the top explains the rules (closed intervals, currencies and decimals, no overlap),
 versioning, authentication with the test credentials, the error format and paging; every endpoint lists its
 parameters, request and response bodies with examples, response headers (`Location`, `X-Total-Count`, `Link`) and
 every error it can return, with the `application/problem+json` body and an example. Requests can be sent from the
@@ -350,7 +362,8 @@ Startup and footprint:
 
 ### Load test
 
-`docker compose up --build` waits for the API to be healthy, then k6:
+`docker compose up --build` waits for the API to be healthy, then k6 drives the statement's own endpoints (the ones
+the recruiter will test):
 
 1. seeds 1,000 products with 5 yearly prices each (2020 to 2024),
 2. runs 2 minutes: 30 s ramp-up to 200 virtual users, then 90 s steady,
