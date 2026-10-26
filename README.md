@@ -54,25 +54,30 @@ The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`
 
 ## API
 
+The API is versioned in the path: every endpoint lives under `/v1`. The statement's four mandatory endpoints are
+also served at their original, unversioned paths (`/products/...`), unchanged, because the automated tests call
+them there. Swagger UI documents `/v1` only. The full reference, with every parameter, schema, example and error, is
+in [Swagger UI](#swagger-ui); this section is the summary.
+
 | Method | Path | Result |
 |---|---|---|
-| `POST` | `/products` | `201`, `Location` pointing to `/products/{id}`, body `{id, name, description}` |
-| `GET` | `/products/{id}` | `200`, the product |
-| `POST` | `/products/{id}/prices` | `201`, the created price |
-| `GET` | `/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
-| `GET` | `/products/{id}/price?date=YYYY-MM-DD` | same as above, preferred form |
-| `GET` | `/products/{id}/prices` | `200`, `{name, description, prices: [...]}` ordered by `initDate`; optional filtering, sorting and paging |
-| `PUT` | `/products/{id}/prices/{currency}/{initDate}` | `200`, the price with its new value and/or end date (OAuth, `products:write`) |
-| `DELETE` | `/products/{id}/prices/{currency}/{initDate}` | `204` (OAuth, `products:write`) |
+| `POST` | `/v1/products` | `201`, `Location` pointing to `/products/{id}`, body `{id, name, description}` |
+| `GET` | `/v1/products/{id}` | `200`, the product |
+| `POST` | `/v1/products/{id}/prices` | `201`, the created price |
+| `GET` | `/v1/products/{id}/prices?date=YYYY-MM-DD` | `200`, `{"value": 99.99}` |
+| `GET` | `/v1/products/{id}/price?date=YYYY-MM-DD` | same as above, preferred form |
+| `GET` | `/v1/products/{id}/prices` | `200`, `{name, description, prices: [...]}` ordered by `initDate`; optional filtering, sorting and paging |
+| `PUT` | `/v1/products/{id}/prices/{currency}/{initDate}` | `200`, the price with its new value and/or end date (OAuth, `products:write`) |
+| `DELETE` | `/v1/products/{id}/prices/{currency}/{initDate}` | `204` (OAuth, `products:write`) |
 
 ```bash
-curl -s -X POST localhost:8080/products -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8080/v1/products -H 'Content-Type: application/json' \
   -d '{"name":"Zapatillas deportivas","description":"Modelo 2025 edición limitada"}'
 
-curl -s -X POST localhost:8080/products/{id}/prices -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8080/v1/products/{id}/prices -H 'Content-Type: application/json' \
   -d '{"value":99.99,"initDate":"2024-01-01","endDate":"2024-06-30"}'
 
-curl -s 'localhost:8080/products/{id}/prices?date=2024-06-30'   # {"value":99.99}
+curl -s 'localhost:8080/v1/products/{id}/prices?date=2024-06-30'   # {"value":99.99}
 ```
 
 ### Rules
@@ -88,26 +93,39 @@ curl -s 'localhost:8080/products/{id}/prices?date=2024-06-30'   # {"value":99.99
 
 ### Changes and additions to the endpoints
 
-- `GET /products/{id}/price?date=` is added as the RESTful way to ask for *the* price in force: it is a single
-  resource, so the path is singular. `GET /products/{id}/prices?date=` is kept unchanged because the automated
-  tests use it, and it is marked as legacy in the OpenAPI description.
-- `GET /products/{id}` returns the product without its prices.
-- Multi-currency (bonus): `POST /products/{id}/prices` accepts an optional `currency` (ISO 4217, default `EUR`),
+The statement says about its four endpoints:
+
+> Los endpoints anteriores se utilizarán en las pruebas automáticas.
+> Sin embargo, **si consideras que alguno puede mejorarse para alinearse mejor con la semántica REST**, puedes hacerlo
+> libremente, justificándolo en el README de tu proyecto.
+
+Both halves are honoured. The four endpoints are served exactly as specified (same paths without a version prefix,
+same verbs, same request and response bodies), so the automated tests pass unchanged; the test
+`theStatementsUnversionedPathsStillWork` checks it. Every improvement is added next to them, never in their place,
+and justified here:
+
+- `/v1` prefix on every endpoint, so a future incompatible change can ship as `/v2` next to it. The unversioned
+  `/products/...` paths answer exactly as the statement specifies and are kept for its tests.
+- `GET /v1/products/{id}/price?date=` is added as the RESTful way to ask for *the* price in force: it is a single
+  resource, so the path is singular. `GET /v1/products/{id}/prices?date=` is kept because the automated tests
+  use that form, and Swagger points to the singular one as preferred.
+- `GET /v1/products/{id}` returns the product without its prices.
+- Multi-currency (bonus): `POST /v1/products/{id}/prices` accepts an optional `currency` (ISO 4217, default `EUR`),
   and both price reads accept `?currency=`. Responses keep exactly the shape of the statement; the currency is
   implied by the request instead of added to every price.
-- `POST /products/{id}/prices` returns no `Location`: a price has no identity of its own, it is reached through
+- `POST /v1/products/{id}/prices` returns no `Location`: a price has no identity of its own, it is reached through
   its product and a date.
 - Update and delete (bonus): a price is identified by its currency and `initDate`, which are unique because periods
-  never overlap. `PUT /products/{id}/prices/{currency}/{initDate}` changes the value and/or the end date in one
+  never overlap. `PUT /v1/products/{id}/prices/{currency}/{initDate}` changes the value and/or the end date in one
   atomic write that re-checks overlaps against the other prices; `DELETE` removes it. Both need an OAuth 2.0 token
   (see [Authentication](#authentication)).
-- History filtering, sorting and paging (bonus): `GET /products/{id}/prices` accepts `from` and `to` (prices in force
+- History filtering, sorting and paging (bonus): `GET /v1/products/{id}/prices` accepts `from` and `to` (prices in force
   in that window), `sort=initDate,asc|initDate,desc`, `page` (zero-based) and `size` (1 to 500). Without them the
   response is exactly the statement's. The body never changes shape: paging goes in an `X-Total-Count` header and
   RFC 8288 `Link` headers with `rel="prev"` and `rel="next"`.
 
 ```bash
-curl -si 'localhost:8080/products/{id}/prices?from=2024-01-01&sort=initDate,desc&page=0&size=2'
+curl -si 'localhost:8080/v1/products/{id}/prices?from=2024-01-01&sort=initDate,desc&page=0&size=2'
 ```
 
 ### Errors
@@ -134,8 +152,16 @@ Errors follow RFC 9457 (`application/problem+json`):
 
 ## Swagger UI
 
-The API is documented with Swagger UI at **http://localhost:8080/swagger-ui**. Every endpoint lists its parameters,
-request and response bodies with examples, and every error status it can return; requests can be sent from the page.
+The API is documented with Swagger UI at **http://localhost:8080/swagger-ui**, and that page is the complete
+reference: the overview at the top explains the rules (closed intervals, currencies and decimals, no overlap),
+versioning, authentication with the test credentials, the error format and paging; every endpoint lists its
+parameters, request and response bodies with examples, response headers (`Location`, `X-Total-Count`, `Link`) and
+every error it can return, with the `application/problem+json` body and an example. Requests can be sent from the
+page.
+
+The overview, the shared error responses and their schemas are written in
+[src/main/resources/META-INF/openapi.yaml](src/main/resources/META-INF/openapi.yaml); Quarkus merges them with what
+the annotations on the resource describe.
 
 The endpoints that change or delete prices are marked with a lock. To call them from Swagger UI:
 
@@ -169,7 +195,7 @@ These are local test credentials; a real deployment loads secrets from a vault a
 TOKEN=$(curl -s -d grant_type=client_credentials -d client_id=products-writer -d client_secret=products-writer-secret \
   http://localhost:8180/realms/products/protocol/openid-connect/token | jq -r .access_token)
 
-curl -s -X PUT localhost:8080/products/{id}/prices/EUR/2024-01-01 -H "Authorization: Bearer $TOKEN" \
+curl -s -X PUT localhost:8080/v1/products/{id}/prices/EUR/2024-01-01 -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"value":89.99,"endDate":"2024-03-31"}'
 ```
 
@@ -178,7 +204,7 @@ What is protected, and why:
 - `PUT` and `DELETE` on prices require a valid token with the `products:write` scope: `401` without a token,
   `403` with a token that lacks the scope.
 - The four mandatory endpoints stay public by default, because the statement's automated tests call them without a
-  token. `PRODUCTS_AUTH_ALL=true` makes every `/products` call require a valid token, which is how it would run in
+  token. `PRODUCTS_AUTH_ALL=true` makes every call under `/v1/products` and `/products` require a valid token, which is how it would run in
   production. Health, metrics and Swagger UI stay open.
 - Authentication runs only where an endpoint asks for it. The Quarkus default authenticates every request up front,
   which would run the security chain on every public request as well.
@@ -363,7 +389,7 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
 |---|---|---|
 | Automated performance test | Done: k6 in `docker compose`, seeding, thresholds, one report per run, every experiment on its own branch | [Load test](#load-test), [perf/RESULTS.md](perf/RESULTS.md) |
 | Multiple currencies per price | Done: optional `currency` on writes and reads, one timeline per currency | [Changes and additions](#changes-and-additions-to-the-endpoints) |
-| Update or delete prices | Done: `PUT` and `DELETE` on `/products/{id}/prices/{currency}/{initDate}`, atomic overlap check | [Changes and additions](#changes-and-additions-to-the-endpoints) |
+| Update or delete prices | Done: `PUT` and `DELETE` on `/v1/products/{id}/prices/{currency}/{initDate}`, atomic overlap check | [Changes and additions](#changes-and-additions-to-the-endpoints) |
 | Basic or token authentication | Done: OAuth 2.0 client credentials with Keycloak, JWT validated by the API, scope `products:write` | [Authentication](#authentication) |
 | Swagger/OpenAPI documentation | Done: Swagger UI with examples, error codes and OAuth login | [Swagger UI](#swagger-ui) |
 | Scripts to seed test data | Done: `scripts/seed.sh`, and k6 seeds 1,000 products before every load run | [Load test](#load-test) |
