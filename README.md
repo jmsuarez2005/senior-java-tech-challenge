@@ -9,6 +9,29 @@ The original statement is in [SPEC.md](SPEC.md). Every design decision, one line
 [docs/DECISIONS.md](docs/DECISIONS.md). Why this stack was chosen is explained at the end, in
 [Stack decision](#stack-decision).
 
+## In short
+
+```bash
+docker compose up --build
+```
+
+The API answers on `http://localhost:8080` about 5 s after MongoDB and Redis are up, with a dummy catalogue
+already loaded; Swagger UI is at `/swagger-ui`. k6 then runs the load test and writes its report to `perf/results`.
+
+| What | Where to look |
+|---|---|
+| The statement's four endpoints, unchanged | `ChallengeResource`; the improvements live next to them under `/v1` ([API](#api)) |
+| Business rules | `domain/`; no overlapping prices is one atomic MongoDB write, safe under concurrency ([Design](#design)) |
+| Performance | At a fixed 450 req/s: median 2.4 ms, p95 49 ms, p99 152 ms, no errors; about 190 MB; 1 CPU ([Stack decision](#stack-decision)) |
+| How the stack was chosen | Six configurations measured under the same load, each on its own branch, from Spring WebFlux to Quarkus reactive with a local cache ([perf/RESULTS.md](perf/RESULTS.md)) |
+| Tests | 133 unit, integration and architecture tests (96% instruction coverage), 66 functional cases in Karate against the running stack ([docs/TEST-CASES.md](docs/TEST-CASES.md)), the k6 load test; all run in CI |
+| Bonus challenges | All seven ([Bonus challenges](#bonus-challenges)) |
+
+Six containers for one API may look like a lot. The solution is the app and MongoDB. Redis is the cache that the
+measurements justified, Keycloak issues the tokens for the authentication bonus and does not delay the API's start,
+`catalog` loads the dummy data and exits, and `benchmark` is the statement's load test. Every auxiliary container
+stays within 0.5 CPU and 1 GB, and the app and benchmark limits are the statement's, untouched.
+
 ## Running it
 
 Everything (API, MongoDB, Redis, Keycloak and the k6 load test) with one command:
@@ -17,11 +40,14 @@ Everything (API, MongoDB, Redis, Keycloak and the k6 load test) with one command
 docker compose up --build
 ```
 
-Only the API with its dependencies:
+Only the API with its dependencies (MongoDB, Redis and the dummy catalogue), without Keycloak or the load test:
 
 ```bash
 docker compose up --build app
 ```
+
+The API does not wait for Keycloak: it checks tokens against Keycloak's public keys, fetched on the first call that
+needs a token. Start Keycloak too (`docker compose up -d keycloak`) to change or delete prices.
 
 Both caches are on by default: Redis and, in front of it, a local in-process cache. `PRODUCTS_LOCAL_CACHE_ENABLED=false`
 leaves Redis only, which is what several instances need (see
@@ -35,8 +61,8 @@ leaves Redis only, which is what several instances need (see
 | `http://localhost:8080/q/metrics` | Prometheus metrics |
 | `http://localhost:8180` | Keycloak, the OAuth 2.0 authorization server (admin / admin) |
 
-Keycloak runs on half a CPU, so on a small machine the first start of the whole stack takes one to three minutes;
-the API itself starts in about 5 s once its dependencies are up.
+The API starts in about 5 s once MongoDB, Redis and the catalogue load are ready. Keycloak, on half a CPU, can take
+one to three minutes on a small machine; until it is up, only the calls that need a token answer `401`.
 
 For local development, start Keycloak from the compose file and run Quarkus dev mode with the Gradle wrapper
 (Java 21); Dev Services start MongoDB and Redis in Docker for you:
@@ -47,7 +73,8 @@ sh gradlew quarkusDev
 ```
 
 Tests need a running Docker daemon (Dev Services start MongoDB and Redis; OAuth is tested with JWTs the tests sign
-themselves with a throwaway key pair in `src/test/resources`):
+themselves with a throwaway key pair in `src/test/resources`). The build also writes a coverage report of every test
+to `build/jacoco-report/index.html`: 96% of instructions and 85% of branches.
 
 ```bash
 sh gradlew build
@@ -79,12 +106,12 @@ scripts/load-catalog.sh
 
 ### Functional tests
 
-65 test cases (153 scenarios) in [Karate](https://karatelabs.io) check every endpoint as a client sees it, against the
+66 test cases (154 scenarios) in [Karate](https://karatelabs.io) check every endpoint as a client sees it, against the
 running stack with real Keycloak tokens, and check that the dummy catalogue reads back exactly as written. The
 cases, their scenarios and the strategy are in [docs/TEST-CASES.md](docs/TEST-CASES.md):
 
 ```bash
-docker compose up -d --build app
+docker compose up -d --build app keycloak
 sh gradlew functionalTest
 ```
 
@@ -166,6 +193,10 @@ and justified here:
   never overlap. `PUT /v1/products/{id}/prices/{currency}/{initDate}` changes the value and/or the end date in one
   atomic write that re-checks overlaps against the other prices; `DELETE` removes it. Both need an OAuth 2.0 token
   (see [Authentication](#authentication)).
+- Safe concurrent changes: `GET /v1/products/{id}` and the history return the product's version as an `ETag`. Sent
+  back in `If-Match` on `PUT` or `DELETE`, the change applies only if nobody changed the product in between;
+  otherwise the answer is `412` and nothing is written. The check is part of the same atomic write, so two clients
+  that read the same version cannot both win. `If-Match` is optional; without it the change applies as before.
 - History filtering, sorting and paging (bonus): `GET /v1/products/{id}/prices` accepts `from` and `to` (prices in force
   in that window), `sort=initDate,asc|initDate,desc`, `page` (zero-based) and `size` (1 to 500). Without them the
   response is exactly the statement's. The body never changes shape: paging goes in an `X-Total-Count` header and
@@ -186,6 +217,7 @@ Errors follow RFC 9457 (`application/problem+json`):
 | `403` | A valid token without the `products:write` scope. |
 | `404` | Unknown product, or no price in force on that date. |
 | `409` | The new price overlaps an existing one in the same currency. |
+| `412` | `If-Match` carries a version the product no longer has. |
 | `415` | A body that is not JSON. |
 
 ```json
@@ -377,8 +409,8 @@ It is the best configuration measured, and it is what `main` runs by default:
 
 - **Same load, lower latency at every percentile.** At a fixed 450 requests per second, branch 06 (this cache in
   front of Redis) against branch 05 (Redis only): median 2.3 ms against 4.4 ms, p95 39 ms against 65 ms, p99 92 ms
-  against 159 ms, averages of two rounds. Of the six experiment branches it is the only one under the statement's
-  load-test threshold, p95 under 50 ms, in both rounds. `main`, which adds OAuth, observability and the new
+  against 159 ms, averages of two rounds. Of the six experiment branches it is the only one under the load test's
+  latency target, p95 under 50 ms, in both rounds. `main`, which adds OAuth, observability and the new
   endpoints, stays under it too: p95 49 ms, p99 152 ms.
 - **More requests with less CPU.** In the closed-loop scenario of the statement it served 26% more requests with
   25% less app CPU per request (69% more in branch 06, measured on a healthy machine).
@@ -398,7 +430,7 @@ come from running all seven configurations at a fixed 450 requests per second (s
 | Pros | Cons |
 |---|---|
 | Best of the seven configurations at every percentile: median 2.3 ms, p95 39 ms, p99 92 ms, no errors; Redis-only on the same stack: 4.4, 65 and 159 ms | With several instances, each serves its own copy: a price changed through another instance can be up to 5 s stale here |
-| The only one under the statement's p95 threshold of 50 ms in both rounds | No read-your-writes across instances behind a load balancer; a client can see a change and then the old value |
+| The only one under the load test's p95 target of 50 ms in both rounds | No read-your-writes across instances behind a load balancer; a client can see a change and then the old value |
 | Least app CPU per request of all (1,847 us), so the most requests per CPU; 3,290 req/s in the closed loop against 1,945 without it | The features `main` adds on top (OAuth, observability) cost about 10% CPU per request and part of the tail: p99 152 ms on `main` |
 | A hit needs no network, no JSON decoding and no rebuilding of the aggregate; Redis load halves | Not acceptable as-is for reads that charge money in a multi-instance deployment |
 | Writes through the same instance are visible immediately; versions stop an older copy replacing a newer one | Each instance holds its own copy (up to 10,000 products) and starts cold after a deploy or scale-out |
@@ -494,7 +526,9 @@ the recruiter will test):
 1. seeds 1,000 products with 5 yearly prices each (2020 to 2024),
 2. runs 2 minutes: 30 s ramp-up to 200 virtual users, then 90 s steady,
 3. mixes 70% price in force, 20% history and 10% new prices (on dates that never overlap),
-4. fails if `http_req_failed >= 1%` or `p(95) >= 50 ms`,
+4. fails if `http_req_failed >= 1%`; with `RATE` set, also if `p(95) >= 50 ms`. The latency target only applies at a
+   fixed rate: in the closed loop, latency is the number of virtual users divided by throughput (Little's law), so a
+   p95 limit there would measure the number of users rather than the API,
 5. writes the full report to `perf/results/summary-<run>.json`.
 
 The script is [perf/load-test.js](perf/load-test.js). Load parameters can be overridden, for example:
@@ -549,8 +583,9 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
 - MongoDB, capped at half a CPU, is the busiest container once the cache is on: writes always go there. It is the
   next thing to scale (a replica for reads that miss the cache, or a write-behind buffer for prices).
 - Absolute numbers in `perf/RESULTS.md` come from a 2 CPU machine where the containers compete for the host; the
-  comparisons between runs hold. On that machine the closed-loop scenario at 200 virtual users does not meet the k6
-  threshold of `p95 < 50 ms`; at a fixed 450 req/s the winning configuration does.
+  comparisons between runs hold. At a fixed 450 req/s the winning configuration meets the
+  p95 target of 50 ms on that machine; the closed loop at 200 virtual users saturates it, which is why the target
+  only applies at a fixed rate.
 - Paging of the history happens in memory over the aggregate, which is already read whole; it bounds the response,
   not the read.
 
@@ -612,7 +647,7 @@ on where it exists). Averages of the two rounds:
 | `main` | winner + OAuth, observability, new endpoints | 2.4 ms | 49 ms | 152 ms | 0% | 1,902 us | 5.1 s |
 
 The local cache (branch 06) is the best configuration at every percentile, with the least CPU per request, in both
-rounds, and the only one under the statement's p95 threshold of 50 ms in both. `main` runs that same configuration
+rounds, and the only one under the load test's p95 target of 50 ms in both. `main` runs that same configuration
 plus the features the challenge asks for, which cost about 10% more CPU per request than branch 06 measured in the
 same session; its p95 stays under 50 ms in both rounds (50 and 49 ms), its tail is longer (p99 127 and 178 ms).
 Each branch is frozen at the measured code, with a note at the top of its README on how to run it and where its

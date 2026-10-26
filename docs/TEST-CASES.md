@@ -3,7 +3,7 @@
 Black-box test cases for every endpoint, automated with [Karate](https://karatelabs.io) in
 [src/functionalTest](../src/functionalTest/resources/functional). Each case below is one Karate scenario tagged with
 its id (`@TC-030`), so a failing run points straight to the case. Scenario outlines expand one case into several
-inputs: 65 cases run as 153 scenarios.
+inputs: 66 cases run as 154 scenarios.
 
 ## Strategy
 
@@ -14,6 +14,9 @@ inputs: 65 cases run as 153 scenarios.
 | Architecture | ArchUnit | The hexagonal dependency rule | Compiled classes |
 | **Functional** | **Karate** | **The API as a client sees it: contracts, business rules, errors, security, caching** | **The running stack** |
 | Performance | k6 | Latency, throughput and errors under load | The running stack |
+
+Unit, integration and architecture tests together cover 96% of instructions and 85% of branches
+(`build/jacoco-report/index.html`, written by `sh gradlew build`).
 
 The functional suite is the only one that runs against the packaged application with its real dependencies:
 the production profile (JSON logs, Quarkus error handling in prod mode), Redis and the local cache, and tokens issued
@@ -38,7 +41,7 @@ Design rules:
 Start the stack, then run the suite (Java 21, from the project root):
 
 ```bash
-docker compose up -d --build app
+docker compose up -d --build app keycloak
 sh gradlew functionalTest
 ```
 
@@ -151,6 +154,7 @@ Tokens come from Keycloak with the client credentials flow, as a calling service
 | TC-086 | `DELETE`, read, `DELETE` again | + | P1 | `204`; no price in force; history without it; second delete `404` |
 | TC-087 | `DELETE`, then add a price on the same period | + | P2 | `201`: the period is free |
 | TC-088 | Scopes in the issued tokens | S | P1 | Writer has `products:write`, reader does not |
+| TC-089 | `GET` the product's `ETag`, `PUT` with it, then `PUT` and `DELETE` again with the old one | + − | P2 | `ETag: "2"`; first `PUT` `200` with `ETag: "3"`; the stale ones `412`, problem; the price keeps the first change |
 
 ### Dummy catalogue ([seeded-catalog.feature](../src/functionalTest/resources/functional/catalog/seeded-catalog.feature))
 
