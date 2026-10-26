@@ -55,6 +55,15 @@ sh gradlew build
 
 The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`.
 
+Functional tests: 60 test cases (123 scenarios) in [Karate](https://karatelabs.io) check every endpoint as a client
+sees it, against the running stack with real Keycloak tokens. The cases, their scenarios and the strategy are in
+[docs/TEST-CASES.md](docs/TEST-CASES.md):
+
+```bash
+docker compose up -d --build app
+sh gradlew functionalTest
+```
+
 ## API
 
 The statement's four endpoints are served **exactly as specified, at their original paths**, because the
@@ -148,9 +157,12 @@ Errors follow RFC 9457 (`application/problem+json`):
 
 | Status | When |
 |---|---|
-| `400` | Invalid body or parameters. `errors` lists every offending field with a message. |
+| `400` | Invalid, malformed or missing body, or invalid parameters. `errors` lists every offending field with a message. |
+| `401` | Changing or deleting a price without a valid token. |
+| `403` | A valid token without the `products:write` scope. |
 | `404` | Unknown product, or no price in force on that date. |
 | `409` | The new price overlaps an existing one in the same currency. |
+| `415` | A body that is not JSON. |
 
 ```json
 {

@@ -16,6 +16,11 @@ repositories {
 	mavenCentral()
 }
 
+// Black-box functional tests in Karate, run against a live instance: sh gradlew functionalTest
+sourceSets {
+	functionalTest
+}
+
 dependencies {
 	implementation enforcedPlatform('io.quarkus.platform:quarkus-bom:3.40.1')
 	implementation 'io.quarkus:quarkus-rest-jackson'
@@ -35,12 +40,30 @@ dependencies {
 	testImplementation 'io.quarkus:quarkus-smallrye-jwt-build'
 	testImplementation 'org.assertj:assertj-core:3.27.7'
 	testImplementation 'com.tngtech.archunit:archunit-junit5:1.5.1'
+
+	functionalTestImplementation 'io.karatelabs:karate-junit6:2.1.4'
+	functionalTestRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.3'
+	functionalTestRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.3'
 }
 
 tasks.withType(JavaCompile).configureEach {
 	options.compilerArgs << '-parameters'
 }
 
-tasks.withType(Test).configureEach {
+tasks.named('test') {
 	systemProperty 'java.util.logging.manager', 'org.jboss.logmanager.LogManager'
+}
+
+tasks.register('functionalTest', Test) {
+	description = 'Runs the Karate functional suite against a running API (BASE_URL, AUTH_URL).'
+	group = 'verification'
+	testClassesDirs = sourceSets.functionalTest.output.classesDirs
+	classpath = sourceSets.functionalTest.runtimeClasspath
+	useJUnitPlatform()
+	systemProperty 'baseUrl', System.getenv('BASE_URL') ?: 'http://localhost:8080'
+	systemProperty 'authUrl', System.getenv('AUTH_URL') ?: 'http://localhost:8180'
+	systemProperty 'karate.output.dir', layout.buildDirectory.dir('karate-reports').get().asFile.path
+	outputs.upToDateWhen { false }
+	// The Quarkus plugin sets its log manager on every Test task; this one runs outside Quarkus.
+	doFirst { systemProperties.remove('java.util.logging.manager') }
 }
