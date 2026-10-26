@@ -13,9 +13,9 @@ services:
       PRODUCTS_LOCAL_CACHE_ENABLED: ${PRODUCTS_LOCAL_CACHE_ENABLED:-true}
       PRODUCTS_AUTH_ALL: ${PRODUCTS_AUTH_ALL:-false}
       JWT_JWKS_URL: http://keycloak:8080/realms/products/protocol/openid-connect/certs
+    # Not Keycloak: tokens are checked against its public keys, fetched on the first protected call, so the API
+    # starts in seconds instead of waiting minutes for the authorization server.
     depends_on:
-      keycloak:
-        condition: service_healthy
       mongo:
         condition: service_healthy
       catalog:

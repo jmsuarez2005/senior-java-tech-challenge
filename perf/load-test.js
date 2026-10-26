@@ -39,13 +39,17 @@ const MIXED = RATE > 0
       gracefulRampDown: '5s',
     };
 
+// Errors always fail the run. The latency target only applies at a fixed rate: in the closed loop, latency is the
+// number of VUs divided by throughput (Little's law), so a p95 limit there measures the VU count, not the API.
+const THRESHOLDS = { 'http_req_failed{scenario:mixed}': ['rate<0.01'] };
+if (RATE > 0) {
+  THRESHOLDS['http_req_duration{scenario:mixed}'] = ['p(95)<50'];
+}
+
 export const options = {
   setupTimeout: '180s',
   scenarios: { mixed: MIXED },
-  thresholds: {
-    'http_req_failed{scenario:mixed}': ['rate<0.01'],
-    'http_req_duration{scenario:mixed}': ['p(95)<50'],
-  },
+  thresholds: THRESHOLDS,
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
 };
 
