@@ -23,7 +23,10 @@ Only the API with its dependencies:
 docker compose up --build app
 ```
 
-Redis is on by default. `PRODUCTS_CACHE_ENABLED=false` runs without the cache (see [Load test](#load-test)).
+Both caches are on by default: Redis and, in front of it, a local in-process cache. `PRODUCTS_LOCAL_CACHE_ENABLED=false`
+leaves Redis only, which is what several instances need (see
+[Local cache in distributed microservices](#local-cache-in-distributed-microservices)), and
+`PRODUCTS_CACHE_ENABLED=false` runs without any cache.
 
 | URL | What |
 |---|---|
@@ -249,7 +252,8 @@ adapters/in/web      JAX-RS resource, request/response records, input validation
 application          one class per use case returning Mutiny Uni, plus the outbound ports ProductRepository and ProductCache
 domain               Product, Price, Money, DateRange, ProductId and their invariants (plain Java)
 adapters/out/mongo   MongoDB document mapping and the ProductRepository implementation
-adapters/out/redis   the ProductCache implementation (adapters/out/nocache when the cache is off)
+adapters/out/redis   the ProductCache implementation on Redis (adapters/out/nocache when the cache is off)
+adapters/out/nearcache  the in-process cache in front of it
 config               composition root: picks the cache implementation at startup
 ```
 
@@ -319,9 +323,63 @@ traffic being reads. Products are now cached in Redis, cache-aside, behind the `
 - The client pool is sized for the load: 32 connections and 512 waiters. With the defaults (6 and 24) the queue
   overflowed under 200 concurrent requests, the cache failed open on most reads and tail latency tripled.
 
-Redis was chosen over an in-process cache because it stays correct when the API runs on several instances.
-The cost is a network round trip and JSON decoding on every read, which an in-process near cache in front of
-Redis would remove if profiling shows it matters.
+### Local cache in front of Redis
+
+In front of Redis sits an in-process cache (Caffeine) that holds the built `Product` for 5 seconds. A hit costs a map
+lookup: no network round trip, no JSON decoding, no rebuilding of the aggregate. Writes made through this instance
+refresh it at once, with the same version rule as Redis, so an older copy never replaces a newer one.
+
+It is the fastest configuration measured. On `main`, against the same code with Redis only, it served 26% more
+requests with 25% less app CPU per request and a 32% lower median latency; in branch 06 the gain was 69%. The p99
+got worse (about 650 ms against 500 ms in the latest runs): the faster reads let more writes per second reach
+MongoDB, which only has half a CPU, and those writes are the slowest requests. Details in
+[perf/RESULTS.md](perf/RESULTS.md).
+
+It is on by default because the challenge runs one instance and grades performance. It is a trade-off that changes
+with the deployment, explained in the next section; `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off and leaves
+Redis as the only cache.
+
+## Local cache in distributed microservices
+
+A local cache is safe with one instance and becomes a consistency problem as soon as the service scales out. These
+are the implications for this service, and what to do about each one.
+
+**1. Instances disagree after a write.** Each instance keeps its own copy. When instance A adds, changes or deletes
+a price, it refreshes its own copy and Redis, but instance B keeps answering from its copy until it expires. For up
+to the local TTL (5 s here) two instances can return different prices for the same product and date.
+
+**2. Clients can see time go backwards.** Behind a load balancer, a client that just changed a price through A can
+read the old one from B on the next call, then the new one from A again. There is no read-your-writes guarantee
+across instances, only within one.
+
+**3. For prices this is a correctness issue.** A catalogue page showing a price that changed seconds ago is usually
+acceptable. A checkout that charges a price no longer in force is not. Reads that commit money must bypass the local
+cache and go to Redis or MongoDB.
+
+**4. Shortening the TTL does not solve it.** A shorter TTL narrows the window and lowers the hit ratio; at about 1 s
+most of the gain is gone and the window still exists. A TTL bounds the inconsistency; it never removes it.
+
+**5. Every instance pays for its own copy.** Memory grows with the number of instances (each can hold up to 10,000
+products here), and the hit ratio of each instance drops as traffic is split among more of them.
+
+**6. Scaling events cause miss storms.** A new or restarted instance starts empty; during autoscaling or a rolling
+deploy, all its first reads go to Redis and MongoDB at once.
+
+**7. The benchmark hides all of this.** The compose file runs one app instance, where a write refreshes the only
+copy that exists. The measurement shows the gain and none of the cost.
+
+What to do, from simplest to strongest:
+
+| Option | How | Consistency | Cost |
+|---|---|---|---|
+| Turn it off | `PRODUCTS_LOCAL_CACHE_ENABLED=false`; Redis is the only cache | Every instance sees the same data | The speed measured without it |
+| Stick clients to an instance | Session affinity on the load balancer | Read-your-writes per client; instances still differ | Uneven load, lost on failover |
+| Broadcast invalidations | Every write publishes the product id (Redis pub/sub, or Redis 6+ client-side caching with tracking) and every instance evicts it | Window shrinks to the broadcast delay, but a message can be lost while an instance reconnects | One more moving part, a reconnect-and-flush policy |
+| Check the version on read | Keep the local copy, compare its `version` with Redis on every read | Always consistent | One Redis round trip per read again; only the JSON decoding is saved |
+| Split by need | Local cache for browsing endpoints, Redis or MongoDB for anything that charges | Consistent where it matters | Two read paths to maintain |
+
+For this service deployed as several instances, the recommendation is to turn the local cache off for
+anything that commits money and, if browsing traffic justifies it, keep it there with invalidation broadcast.
 
 ### Open end as a sentinel
 
@@ -381,6 +439,7 @@ Every run gets a name for its report. To compare against the minimal setup, swit
 
 ```bash
 RUN=no-cache PRODUCTS_CACHE_ENABLED=false docker compose up --build
+RUN=redis-only PRODUCTS_LOCAL_CACHE_ENABLED=false docker compose up --build
 ```
 
 [scripts/seed.sh](scripts/seed.sh) seeds any running instance without k6:
@@ -412,9 +471,9 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
 
 - A MongoDB document is capped at 16 MB, about 150k embedded prices per product. Past that, the bucket pattern
   (one document per product and period) keeps the same queries.
-- The near cache measured in branch `experiment/06-near-cache` is the biggest single gain (+69% throughput) and is
-  not used, because it is not consistent across instances; see
-  [perf/RESULTS.md](perf/RESULTS.md#why-the-near-cache-was-not-adopted-it-does-not-scale-out).
+- The local cache is on by default for the single-instance setup of the challenge. With several instances it serves
+  stale prices for up to 5 s after a change made elsewhere; see
+  [Local cache in distributed microservices](#local-cache-in-distributed-microservices).
 - The mandatory endpoints are public unless `PRODUCTS_AUTH_ALL=true`, so the statement's tests can call them.
 - Keycloak runs in dev mode with an embedded database, which is fine for the challenge and not for production.
 - MongoDB, capped at half a CPU, is the busiest container once the cache is on: writes always go there. It is the
@@ -458,8 +517,9 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
    consistently better, so it is the chosen model.
 6. **Review fixes** from a technical lead and an architect review (a CPU denial of service through huge numbers, a
    stale cache after a failed write, missing timeouts) cost about 4% of throughput, all of it the circuit breaker.
-7. **A near cache** in the app was the biggest gain of all (+69% throughput) and was rejected: it cannot keep several
-   instances consistent, which matters more for prices than speed.
+7. **A local cache** in the app was the biggest gain of all (+69% throughput in branch 06, +26% on `main`). It is on
+   by default for the challenge's single instance, with a switch and the consistency trade-off documented for
+   distributed deployments.
 
 
 | Branch | Stack (with Redis) | req/s | p95 | p99 | Startup | Memory |
@@ -469,7 +529,7 @@ on its own under the same limits. The full log is in [perf/RESULTS.md](perf/RESU
 | `experiment/03-quarkus-virtual-threads` | Quarkus 3, virtual threads | ~1,790 | ~161 ms | ~221 ms | 2.5 s | ~150 MB |
 | `experiment/04-quarkus-reactive` | **Quarkus 3, reactive (Mutiny)** | **~1,980** | **~148 ms** | **~198 ms** | **2.5 s** | **~150 MB** |
 | `experiment/05-review-fixes` | + fixes from the technical review | ~1,945 | ~152 ms | ~201 ms | 2.3 s | ~155 MB |
-| `experiment/06-near-cache` | + in-process cache in front of Redis (not adopted) | ~3,290 | ~130 ms | ~208 ms | 2.7 s | ~160 MB |
+| `experiment/06-near-cache` | **+ in-process cache in front of Redis (on `main`)** | ~3,290 | ~130 ms | ~208 ms | 2.7 s | ~160 MB |
 
 Each branch is frozen at the code that was measured and can be run again with `docker compose up --build`.
 
@@ -490,9 +550,10 @@ thinner than Reactor on WebFlux. That is why the model was measured again instea
   more declaratively; MongoDB was preferred for the read path, where a product and its whole history are one lookup.
 - **Redis adds a container and a network hop.** It fails open behind a circuit breaker, so the API works
   the same without it.
-- **A shared cache instead of a faster local one.** The near cache would have served 69% more requests, but each
-  instance would answer from its own copy for up to its TTL after another instance changed a price. Scaling out
-  correctly comes first.
+- **A local cache that is only right for one instance.** It is the fastest option measured, and with several
+  instances each would answer from its own copy for up to 5 s after another one changed a price. It is on for the
+  challenge and documented, with a switch, for distributed deployments; it also raises p99 because writes reach
+  MongoDB faster.
 - **Keycloak is a fifth container.** It adds memory (about 500 MB) and startup time to the compose stack, in exchange
   for the standard microservice security model instead of credentials checked inside the API.
 

@@ -18,7 +18,7 @@ One line per experiment, with its best configuration (averages of the repeats).
 | 3 | [`experiment/03-quarkus-virtual-threads`](../../../tree/experiment/03-quarkus-virtual-threads) | Quarkus, same design, only adapters rewritten | 1,789 | 72 ms | 161 ms | 221 ms | 2.5 s | ~150 MB |
 | 4 | [`experiment/04-quarkus-reactive`](../../../tree/experiment/04-quarkus-reactive) | Quarkus reactive: Mutiny, Vert.x event loop, reactive drivers | 1,984 | 66 ms | 148 ms | 198 ms | 2.3 s | ~150 MB |
 | 5 | [`experiment/05-review-fixes`](../../../tree/experiment/05-review-fixes) | Fixes from the technical review, Redis on by default | 1,945 | 68 ms | 152 ms | 201 ms | 2.3 s | ~155 MB |
-| 6 | [`experiment/06-near-cache`](../../../tree/experiment/06-near-cache) | In-process Caffeine cache in front of Redis (not adopted, see below) | 3,290 | 32 ms | 130 ms | 208 ms | 2.7 s | ~160 MB |
+| 6 | [`experiment/06-near-cache`](../../../tree/experiment/06-near-cache) | In-process Caffeine cache in front of Redis (now on `main`, see below) | 3,290 | 32 ms | 130 ms | 208 ms | 2.7 s | ~160 MB |
 
 Rows 5 and 6 were measured alternately in the same session (control and candidate); rows 1 to 4 earlier. The
 machine drifted by about 8% over the day (see run 8c), so compare neighbouring rows rather than distant ones.
@@ -115,10 +115,27 @@ What each piece costs, per request, against a control of about 880 us:
 The shipped `main` costs about 20% more CPU per request than branch 05, in exchange for authentication, the extra
 endpoints and observability.
 
-## Why the near cache was not adopted: it does not scale out
+## Near cache on `main`
 
-The near cache is the biggest single gain measured, and it is still not on `main`. The gain comes from keeping a
-copy of each product inside each app instance, and that is exactly what breaks when the service scales out:
+The near cache went into `main`, on by default, after the features above. Measured A/B against the same `main` with
+Redis only, alternated, without Keycloak (it is not on the request path), on the host affected by the external
+process:
+
+| Run | Code | App CPU per request | req/s | median | p95 | p99 |
+|---|---|---|---|---|---|---|
+| E1 | `main`, Redis only | 1,294 us | 622 | 205 ms | 390 ms | 502 ms |
+| F1 | `main`, near cache + Redis | 970 us | 776 | 138 ms | 410 ms | 642 ms |
+| E2 | `main`, Redis only (repeat) | 1,270 us | 624 | 206 ms | 382 ms | 491 ms |
+| F2 | `main`, near cache + Redis (repeat) | 947 us | 785 | 139 ms | 402 ms | 664 ms |
+
+Throughput +26%, app CPU per request -25%, median -32%, p95 +5%, p99 +31%. Redis CPU halved while MongoDB's went
+from about 8% to 13 to 29%: faster reads let more writes per second reach MongoDB, capped at half a CPU, and the
+writes are the slowest requests. In branch 06, measured on a healthy host, p99 did not move and throughput was +69%.
+
+## The near cache does not scale out by itself
+
+The gain comes from keeping a copy of each product inside each app instance, and that is exactly what breaks when
+the service scales out. The README explains the implications for microservices and the options; in short:
 
 - **No shared invalidation.** When instance A adds a price, it refreshes its own in-process copy and Redis. Instance
   B keeps serving its own copy until it expires. A client load-balanced across instances can read a new price and
@@ -138,11 +155,11 @@ What a scalable version needs, in order of increasing guarantees:
 2. **Version check on read:** keep the local copy, but compare its `version` with a cheap read of the version in
    Redis on every request. Always consistent, but it brings back one Redis round trip per read and keeps only the
    saving on JSON decoding.
-3. **No local copy:** Redis as the only cache, which is what `main` does. Every instance sees the same data at the
-   cost measured in branch 05.
+3. **No local copy:** Redis as the only cache (`PRODUCTS_LOCAL_CACHE_ENABLED=false`). Every instance sees the same
+   data at the cost measured in runs E1 and E2.
 
-`main` stays on option 3 because the statement asks for correct prices first. Option 1 is the next experiment worth
-running if a few milliseconds of cross-instance staleness were acceptable for reads that are not part of a checkout.
+`main` runs with the local cache on because the challenge deploys one instance and grades performance; option 3 is
+one environment variable away for a distributed deployment, and option 1 is the next experiment worth running.
 
 ## Caveats
 

@@ -10,7 +10,7 @@
 - Package root `com.mango.products`: kept from the provided scaffold.
 
 - Every experiment has its own branch (`experiment/01-...` to `experiment/06-...`) frozen at the measured code, so any row of `perf/RESULTS.md` can be run again; `main` carries the chosen design.
-- The in-process near cache (branch 06) is not on `main` despite +69% throughput: each instance would serve its own copy for up to its TTL after another instance changed a price, and a scalable version needs invalidation that this benchmark (one instance) cannot show the cost of.
+- The in-process near cache (branch 06) is on `main` and on by default: it was the best result measured (+69% throughput in branch 06, +26% on `main`) and the challenge runs one instance. Its price is consistency across instances (each serves its own copy for up to 5 s after a change made elsewhere) and a higher p99 from writes reaching MongoDB faster; both are documented, and `PRODUCTS_LOCAL_CACHE_ENABLED=false` turns it off for distributed deployments.
 
 ## Architecture
 
