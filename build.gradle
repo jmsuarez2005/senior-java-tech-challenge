@@ -18,7 +18,10 @@ repositories {
 
 // Black-box functional tests in Karate, run against a live instance: sh gradlew functionalTest
 sourceSets {
-	functionalTest
+	functionalTest {
+		// The suite reads the seeded catalogue to know what to expect
+		resources.srcDir 'seed'
+	}
 }
 
 dependencies {

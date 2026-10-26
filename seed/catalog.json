@@ -1,0 +1,104 @@
+{
+  "description": "Dummy catalogue loaded on every docker compose up. Ids are fixed so tests can use them. Prices are in API format: value in currency units, endDate null for open-ended. Tests read these products and never change them.",
+  "products": [
+    {
+      "key": "statement-sneakers",
+      "id": "665000000000000000000001",
+      "purpose": "The statement's example, exactly",
+      "name": "Zapatillas deportivas",
+      "description": "Modelo 2025 edición limitada",
+      "prices": [
+        { "value": 99.99, "initDate": "2024-01-01", "endDate": "2024-06-30", "currency": "EUR" },
+        { "value": 199.99, "initDate": "2025-01-01", "endDate": "2025-06-30", "currency": "EUR" }
+      ]
+    },
+    {
+      "key": "linen-shirt",
+      "id": "665000000000000000000002",
+      "purpose": "Back-to-back periods with a one-month sale, then an open-ended price",
+      "name": "Camisa de lino",
+      "description": "Camisa de manga larga 100% lino",
+      "prices": [
+        { "value": 39.99, "initDate": "2024-03-01", "endDate": "2024-06-30", "currency": "EUR" },
+        { "value": 29.99, "initDate": "2024-07-01", "endDate": "2024-07-31", "currency": "EUR" },
+        { "value": 39.99, "initDate": "2024-08-01", "endDate": null, "currency": "EUR" }
+      ]
+    },
+    {
+      "key": "wool-coat",
+      "id": "665000000000000000000003",
+      "purpose": "Three currencies with their own timelines",
+      "name": "Abrigo de lana",
+      "description": "Abrigo largo de lana mezcla",
+      "prices": [
+        { "value": 149.99, "initDate": "2024-09-01", "endDate": "2025-02-28", "currency": "EUR" },
+        { "value": 119.99, "initDate": "2025-03-01", "endDate": null, "currency": "EUR" },
+        { "value": 169.99, "initDate": "2024-09-01", "endDate": "2025-02-28", "currency": "USD" },
+        { "value": 129.99, "initDate": "2024-09-01", "endDate": null, "currency": "GBP" }
+      ]
+    },
+    {
+      "key": "leather-bag",
+      "id": "665000000000000000000004",
+      "purpose": "Currencies with 0 (JPY) and 3 (KWD) decimals",
+      "name": "Bolso de piel",
+      "description": "Bolso shopper de piel",
+      "prices": [
+        { "value": 89.99, "initDate": "2024-01-01", "endDate": null, "currency": "EUR" },
+        { "value": 14900, "initDate": "2024-01-01", "endDate": null, "currency": "JPY" },
+        { "value": 32.5, "initDate": "2024-01-01", "endDate": null, "currency": "KWD" }
+      ]
+    },
+    {
+      "key": "slim-jeans",
+      "id": "665000000000000000000005",
+      "purpose": "Twelve monthly prices for paging, sorting and window filters",
+      "name": "Vaqueros slim",
+      "description": "Vaqueros de tiro medio",
+      "prices": [
+        { "value": 49.99, "initDate": "2024-01-01", "endDate": "2024-01-31", "currency": "EUR" },
+        { "value": 45.99, "initDate": "2024-02-01", "endDate": "2024-02-29", "currency": "EUR" },
+        { "value": 45.99, "initDate": "2024-03-01", "endDate": "2024-03-31", "currency": "EUR" },
+        { "value": 49.99, "initDate": "2024-04-01", "endDate": "2024-04-30", "currency": "EUR" },
+        { "value": 49.99, "initDate": "2024-05-01", "endDate": "2024-05-31", "currency": "EUR" },
+        { "value": 39.99, "initDate": "2024-06-01", "endDate": "2024-06-30", "currency": "EUR" },
+        { "value": 35.99, "initDate": "2024-07-01", "endDate": "2024-07-31", "currency": "EUR" },
+        { "value": 39.99, "initDate": "2024-08-01", "endDate": "2024-08-31", "currency": "EUR" },
+        { "value": 49.99, "initDate": "2024-09-01", "endDate": "2024-09-30", "currency": "EUR" },
+        { "value": 52.99, "initDate": "2024-10-01", "endDate": "2024-10-31", "currency": "EUR" },
+        { "value": 44.99, "initDate": "2024-11-01", "endDate": "2024-11-30", "currency": "EUR" },
+        { "value": 52.99, "initDate": "2024-12-01", "endDate": "2024-12-31", "currency": "EUR" }
+      ]
+    },
+    {
+      "key": "knit-hat",
+      "id": "665000000000000000000006",
+      "purpose": "A product without prices",
+      "name": "Gorro de punto",
+      "description": "Gorro de punto canalé",
+      "prices": []
+    },
+    {
+      "key": "cotton-tee",
+      "id": "665000000000000000000007",
+      "purpose": "A year without price between two periods, and no description",
+      "name": "Camiseta básica",
+      "description": null,
+      "prices": [
+        { "value": 12.99, "initDate": "2023-01-01", "endDate": "2023-12-31", "currency": "EUR" },
+        { "value": 15.99, "initDate": "2025-01-01", "endDate": null, "currency": "EUR" }
+      ]
+    },
+    {
+      "key": "suit-blazer",
+      "id": "665000000000000000000008",
+      "purpose": "A period that ends on a leap day",
+      "name": "Blazer de traje",
+      "description": "Blazer recta de traje",
+      "prices": [
+        { "value": 129.99, "initDate": "2024-02-01", "endDate": "2024-02-29", "currency": "EUR" },
+        { "value": 99.99, "initDate": "2024-03-01", "endDate": "2024-03-31", "currency": "EUR" }
+      ]
+    }
+  ]
+}

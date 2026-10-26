@@ -3,7 +3,7 @@
 Black-box test cases for every endpoint, automated with [Karate](https://karatelabs.io) in
 [src/functionalTest](../src/functionalTest/resources/functional). Each case below is one Karate scenario tagged with
 its id (`@TC-030`), so a failing run points straight to the case. Scenario outlines expand one case into several
-inputs: 60 cases run as 123 scenarios.
+inputs: 65 cases run as 153 scenarios.
 
 ## Strategy
 
@@ -21,8 +21,11 @@ by Keycloak. Integration tests run in test mode, which is how the defects listed
 
 Design rules:
 
-- **Independent cases.** Every scenario creates its own product, so cases run in any order, can be repeated against
-  the same database and never depend on seeded data.
+- **Independent cases.** Every scenario that writes creates its own product, so cases run in any order and can be
+  repeated against the same database.
+- **Known data, read only.** The dummy catalogue in [seed/catalog.json](../seed/catalog.json) is loaded with fixed
+  ids on every start. The catalogue cases read the same file to know what to expect and never change those products,
+  so the catalogue is the single source of truth for the data and for the expected results.
 - **Exact contracts.** Responses are compared whole (`match response == {...}`), so an extra or missing field fails.
 - **Every error is checked as RFC 9457**: `application/problem+json` with `title`, `status`, `detail` and `instance`,
   plus `errors` naming the field for validation failures.
@@ -148,6 +151,18 @@ Tokens come from Keycloak with the client credentials flow, as a calling service
 | TC-086 | `DELETE`, read, `DELETE` again | + | P1 | `204`; no price in force; history without it; second delete `404` |
 | TC-087 | `DELETE`, then add a price on the same period | + | P2 | `201`: the period is free |
 | TC-088 | Scopes in the issued tokens | S | P1 | Writer has `products:write`, reader does not |
+
+### Dummy catalogue ([seeded-catalog.feature](../src/functionalTest/resources/functional/catalog/seeded-catalog.feature))
+
+Read-only cases over the 8 products loaded at startup from [seed/catalog.json](../seed/catalog.json).
+
+| Id | Case | Type | P | Expected |
+|---|---|---|---|---|
+| TC-100 | Each of the 8 seeded products, in every currency it has | + | P1 | Product and history equal the catalogue, field by field |
+| TC-101 | The statement's example on the seeded product, through the statement paths | + | P1 | `{"value": 99.99}` and exactly the statement's history |
+| TC-102 | 15 price-in-force checks: around a sale, after an open end, per currency, JPY and KWD, across a year without price, on a leap day | + B | P1 | The expected value |
+| TC-103 | Before the first price, the day after a USD price ends, the year without price, a product without prices | − B | P1 | `404`, problem |
+| TC-104 | Paging, sorting and a window over twelve monthly prices | + | P2 | The expected page, order and prices; `X-Total-Count: 12` |
 
 ### Platform ([platform.feature](../src/functionalTest/resources/functional/platform/platform.feature))
 

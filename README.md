@@ -55,9 +55,33 @@ sh gradlew build
 
 The wrapper shipped with the challenge has no executable bit, hence `sh gradlew`.
 
-Functional tests: 60 test cases (123 scenarios) in [Karate](https://karatelabs.io) check every endpoint as a client
-sees it, against the running stack with real Keycloak tokens. The cases, their scenarios and the strategy are in
-[docs/TEST-CASES.md](docs/TEST-CASES.md):
+### Dummy data
+
+Every `docker compose up` loads a small dummy catalogue before the API starts: 8 products with fixed ids, from
+[seed/catalog.json](seed/catalog.json), each built for one kind of check (the statement's example, a sale between two
+periods, three currencies, JPY and KWD decimals, twelve monthly prices for paging, no prices, a year without price,
+a period ending on a leap day). They are there to try the API by hand and for the tests:
+
+```bash
+curl -s localhost:8080/products/665000000000000000000001/prices?date=2024-04-15   # {"value":99.99}
+```
+
+The `catalog` service runs [seed/load-catalog.js](seed/load-catalog.js), which checks the catalogue against the API's
+rules (no overlaps, valid periods, decimals per currency) before writing, and replaces each product by id, so loading
+it twice changes nothing. A broken catalogue stops the start instead of storing data the API would reject. To restore
+it after changing those products by hand:
+
+```bash
+scripts/load-catalog.sh
+```
+
+[scripts/seed.sh](scripts/seed.sh) is a different tool: bulk random products for load, through the API.
+
+### Functional tests
+
+65 test cases (153 scenarios) in [Karate](https://karatelabs.io) check every endpoint as a client sees it, against the
+running stack with real Keycloak tokens, and check that the dummy catalogue reads back exactly as written. The
+cases, their scenarios and the strategy are in [docs/TEST-CASES.md](docs/TEST-CASES.md):
 
 ```bash
 docker compose up -d --build app
@@ -510,7 +534,7 @@ Every run, what changed and how it was measured: [perf/RESULTS.md](perf/RESULTS.
 | Update or delete prices | Done: `PUT` and `DELETE` on `/v1/products/{id}/prices/{currency}/{initDate}`, atomic overlap check | [Changes and additions](#changes-and-additions-to-the-endpoints) |
 | Basic or token authentication | Done: OAuth 2.0 client credentials with Keycloak, JWT validated by the API, scope `products:write` | [Authentication](#authentication) |
 | Swagger/OpenAPI documentation | Done: Swagger UI with examples, error codes and OAuth login | [Swagger UI](#swagger-ui) |
-| Scripts to seed test data | Done: `scripts/seed.sh`, and k6 seeds 1,000 products before every load run | [Load test](#load-test) |
+| Scripts to seed test data | Done: a dummy catalogue with fixed ids loaded on every start and used by the tests (`seed/`, `scripts/load-catalog.sh`); `scripts/seed.sh` for bulk data, and k6 seeds 1,000 products before every load run | [Dummy data](#dummy-data), [Load test](#load-test) |
 | Paging, sorting or filtering of the history | Done: `from`, `to`, `sort`, `page`, `size`, with `X-Total-Count` and `Link` headers | [Changes and additions](#changes-and-additions-to-the-endpoints) |
 
 ## Known limits

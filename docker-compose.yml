@@ -18,6 +18,8 @@ services:
         condition: service_healthy
       mongo:
         condition: service_healthy
+      catalog:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -50,6 +52,24 @@ services:
         limits:
           cpus: '0.5'
           memory: 1G
+
+  # Loads the dummy catalogue in seed/catalog.json, then exits; the API starts after it.
+  catalog:
+    image: mongo:8.0
+    container_name: product-catalog
+    command: ["mongosh", "--quiet", "mongodb://mongo:27017/products", "/seed/load-catalog.js"]
+    environment:
+      SEED_DIR: /seed
+    volumes:
+      - ./seed:/seed:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   redis:
     image: redis:8.10-alpine
