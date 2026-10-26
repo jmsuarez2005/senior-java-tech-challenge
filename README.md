@@ -1,5 +1,10 @@
 # Products API
 
+> **Experiment branch 6 of 6: `experiment/06-near-cache`.** Branch 05 plus a local in-process cache (Caffeine, 5 s) in front of Redis; the configuration `main` is built on.
+> The code is frozen as it was measured; the comparison of all branches is in the README on `main`.
+> Run it in its measured configuration with `docker compose up --build`. Swagger UI: `http://localhost:8080/swagger-ui`;
+> the API document (SmallRye OpenAPI): `http://localhost:8080/q/openapi`.
+
 Products with historical prices. A product can have many prices over time, but only one price in force per day
 and currency. Built with Java 21 on the Quarkus reactive stack (Mutiny on the Vert.x event loop) and MongoDB, with
 a Redis cache.
