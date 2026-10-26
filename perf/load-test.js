@@ -9,7 +9,6 @@ const PRICES_PER_PRODUCT = 5;
 const SEED_BATCH = 50;
 const JSON_HEADERS = { headers: { 'Content-Type': 'application/json' } };
 
-// Seeded prices cover 2020-01-01..2024-12-31, one year each. Load-test writes start in 2030.
 const SEED_FIRST_YEAR = 2020;
 const WRITE_EPOCH = Date.UTC(2030, 0, 1);
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -18,8 +17,6 @@ const RAMP_UP = __ENV.RAMP_UP || '30s';
 const STEADY = __ENV.STEADY || '90s';
 const RATE = Number(__ENV.RATE || 0);
 
-// Default: closed loop, each VU sends its next request as soon as the last one answers (the statement's scenario).
-// RATE=n: open model at n requests per second whatever the latency, to compare configurations under the same load.
 const MIXED = RATE > 0
   ? {
       executor: 'ramping-arrival-rate',
@@ -39,8 +36,6 @@ const MIXED = RATE > 0
       gracefulRampDown: '5s',
     };
 
-// Errors always fail the run. The latency target only applies at a fixed rate: in the closed loop, latency is the
-// number of VUs divided by throughput (Little's law), so a p95 limit there measures the VU count, not the API.
 const THRESHOLDS = { 'http_req_failed{scenario:mixed}': ['rate<0.01'] };
 if (RATE > 0) {
   THRESHOLDS['http_req_duration{scenario:mixed}'] = ['p(95)<50'];
@@ -108,8 +103,6 @@ function randomSeededDate() {
   return isoDate(start + days * DAY_MS);
 }
 
-// Every iteration of the test gets its own two-day window, so concurrent writes never overlap. The counter is global
-// and dense: deriving it from the VU number pushed dates past year 9999 when a slow server made k6 start many VUs.
 function uniqueFuturePrice() {
   const slot = exec.scenario.iterationInTest;
   const init = WRITE_EPOCH + slot * 2 * DAY_MS;

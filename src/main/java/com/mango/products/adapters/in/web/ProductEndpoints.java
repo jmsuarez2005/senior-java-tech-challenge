@@ -30,8 +30,6 @@ import jakarta.ws.rs.core.EntityTag;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 
-// What both resources do once a request is routed and validated. The resources keep only paths, validation and
-// documentation, so the statement's endpoints and /v1 share one implementation without calling each other.
 @ApplicationScoped
 class ProductEndpoints {
 
@@ -78,7 +76,6 @@ class ProductEndpoints {
 				.map(PriceValueResponse::from);
 	}
 
-	// GET .../prices: the price in force when date is given, otherwise the history.
 	Uni<Response> prices(String id, String date, String currency, String from, String to, String sort, int page,
 			int size, UriInfo uri) {
 		if (date != null) {

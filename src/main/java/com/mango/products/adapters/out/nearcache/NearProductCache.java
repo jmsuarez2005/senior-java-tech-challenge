@@ -10,10 +10,6 @@ import com.mango.products.domain.ProductId;
 
 import io.smallrye.mutiny.Uni;
 
-/**
- * In-process first level in front of a shared cache. A hit costs a map lookup: no network, no JSON, no rebuilding of
- * the aggregate. Local writes refresh it at once; changes made by other instances show up after {@code ttl} at most.
- */
 public class NearProductCache implements ProductCache {
 
 	private final Cache<ProductId, Product> local;
@@ -39,7 +35,6 @@ public class NearProductCache implements ProductCache {
 		return shared.put(product);
 	}
 
-	// Same rule as the shared cache: an older copy of the aggregate never replaces a newer one.
 	private void keepNewest(Product product) {
 		local.asMap().merge(product.id(), product,
 				(cached, candidate) -> candidate.version() >= cached.version() ? candidate : cached);

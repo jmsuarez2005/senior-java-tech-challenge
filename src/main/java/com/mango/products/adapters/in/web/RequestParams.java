@@ -10,10 +10,8 @@ import java.util.regex.Pattern;
 import com.mango.products.adapters.in.web.dto.HistoryQuery;
 import com.mango.products.domain.DomainValidationException;
 
-// JAX-RS turns an unconvertible query parameter into a 404; parsing here keeps it a 400 with the field name.
 final class RequestParams {
 
-	// The ETag this API sends: the product version as a strong entity tag, "3".
 	private static final Pattern VERSION_TAG = Pattern.compile("\"(\\d{1,18})\"");
 
 	private RequestParams() {
@@ -62,7 +60,6 @@ final class RequestParams {
 		return new HistoryQuery(currency(currency), fromDate, toDate, descending, page, size);
 	}
 
-	// No If-Match, or "*", means the change applies whatever the current version is.
 	static OptionalLong expectedVersion(String ifMatch) {
 		if (ifMatch == null || ifMatch.isBlank() || ifMatch.strip().equals("*")) {
 			return OptionalLong.empty();

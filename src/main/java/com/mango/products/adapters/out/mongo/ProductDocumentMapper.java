@@ -13,7 +13,6 @@ import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
-// Dates are stored as ISO yyyy-MM-dd strings: they sort like dates and carry no time zone.
 final class ProductDocumentMapper {
 
 	static final String ID = "_id";

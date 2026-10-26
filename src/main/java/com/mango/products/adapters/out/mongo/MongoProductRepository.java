@@ -126,8 +126,6 @@ class MongoProductRepository implements ProductRepository {
 				.onItem().ifNull().switchTo(() -> explainRejectedChange(id, currency, initDate, expectedVersion, null));
 	}
 
-	// Only runs when a change was rejected: one read to tell which reason applies. The price exists but the write was
-	// rejected only for an overlap, so a removal (which cannot overlap) passes no overlap.
 	private Uni<Product> explainRejectedChange(ProductId id, Currency currency, LocalDate initDate,
 			OptionalLong expectedVersion, PriceOverlapException overlap) {
 		return findById(id).chain(product -> {
@@ -151,7 +149,6 @@ class MongoProductRepository implements ProductRepository {
 						count > 0 ? new PriceOverlapException(id, price) : new ProductNotFoundException(id)));
 	}
 
-	// Closed intervals [a, b] and [c, d] overlap when a <= d and c <= b.
 	private static Bson overlapping(Document price) {
 		return and(eq(CURRENCY, price.getString(CURRENCY)),
 				lte(INIT_DATE, price.getString(END_DATE)),

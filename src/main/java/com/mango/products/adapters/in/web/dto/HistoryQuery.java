@@ -8,10 +8,6 @@ import java.util.List;
 import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 
-/**
- * Filtering, sorting and paging of a product's price history. The aggregate is already loaded in one read, so this
- * runs in memory; {@code size == 0} means "everything", which keeps the statement's response unchanged by default.
- */
 public record HistoryQuery(Currency currency, LocalDate from, LocalDate to, boolean descending, int page, int size) {
 
 	public static final int MAX_PAGE_SIZE = 500;
@@ -22,7 +18,6 @@ public record HistoryQuery(Currency currency, LocalDate from, LocalDate to, bool
 		return size > 0;
 	}
 
-	// Prices of the currency whose closed period overlaps [from, to].
 	public List<Price> matching(Product product) {
 		return product.prices().stream()
 				.filter(price -> price.money().currency().equals(currency))

@@ -8,7 +8,6 @@ import java.util.OptionalLong;
 
 public record Money(long amountMinor, Currency currency) {
 
-	// Any number with up to 18 digits fits in a long.
 	public static final int MAX_DIGITS = 18;
 
 	public Money {
@@ -28,7 +27,6 @@ public record Money(long amountMinor, Currency currency) {
 		return currency.getDefaultFractionDigits() >= 0;
 	}
 
-	// True when the value has no more decimals than the currency allows and fits in a long.
 	public static boolean isRepresentable(BigDecimal value, Currency currency) {
 		return hasMinorUnit(currency) && toMinorUnits(value, currency.getDefaultFractionDigits()).isPresent();
 	}
@@ -49,7 +47,6 @@ public record Money(long amountMinor, Currency currency) {
 		return currency.getDefaultFractionDigits();
 	}
 
-	// Size is checked before scaling: rescaling a crafted value like 1e10000000 would build a ten-million-digit number.
 	private static OptionalLong toMinorUnits(BigDecimal value, int fractionDigits) {
 		BigDecimal stripped = value.stripTrailingZeros();
 		boolean tooManyDecimals = stripped.scale() > fractionDigits;

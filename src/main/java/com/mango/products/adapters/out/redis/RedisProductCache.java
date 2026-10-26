@@ -25,7 +25,6 @@ public class RedisProductCache implements ProductCache {
 
 	private static final Logger log = Logger.getLogger(RedisProductCache.class);
 
-	// Compare-and-set on the aggregate version, so a slow writer can never bring back an older copy.
 	private static final String PUT_IF_NEWER = """
 			local current = redis.call('GET', KEYS[1])
 			if current and cjson.decode(current)['version'] >= tonumber(ARGV[2]) then
@@ -49,7 +48,6 @@ public class RedisProductCache implements ProductCache {
 	private final Counter readErrors;
 	private final Counter writeErrors;
 
-	// One breaker for every Redis call: when Redis is slow or down, requests skip it instead of each paying the timeout.
 	private final Guard redisCircuit = Guard.create()
 			.withDescription("redis-product-cache")
 			.withCircuitBreaker()
@@ -83,7 +81,6 @@ public class RedisProductCache implements ProductCache {
 				});
 	}
 
-	// If the new version cannot be stored, the old one is deleted: a stale price must never outlive a write.
 	@Override
 	public Uni<Void> put(Product product) {
 		return redisCircuit.get(() -> Uni.createFrom().item(() -> write(CachedProduct.from(product)))
@@ -103,7 +100,6 @@ public class RedisProductCache implements ProductCache {
 				.onFailure().recoverWithNull();
 	}
 
-	// While the circuit is open every call fails fast; the state change is logged once instead of one line per request.
 	private static void logFailure(String operation, ProductId id, Throwable e) {
 		if (!(e instanceof CircuitBreakerOpenException)) {
 			log.warnf("Cache %s failed for product %s: %s", operation, id, e);

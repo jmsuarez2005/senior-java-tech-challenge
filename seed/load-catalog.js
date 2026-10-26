@@ -1,6 +1,3 @@
-// Loads seed/catalog.json into the products collection with mongosh. Idempotent: each product is replaced by id,
-// so running it again restores the catalogue. The rules the API enforces are checked first, so a bad edit to the
-// catalogue stops the load instead of storing data the API would never accept.
 const fs = require('fs');
 const path = require('path');
 

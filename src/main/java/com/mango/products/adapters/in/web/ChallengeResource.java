@@ -34,8 +34,6 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 
-// The statement's four endpoints, exactly as specified: its automated tests call these paths, so they never change.
-// They share ProductEndpoints with /v1, so both answer the same way.
 @Path("/products")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)

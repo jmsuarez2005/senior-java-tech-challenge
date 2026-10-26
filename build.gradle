@@ -17,10 +17,8 @@ repositories {
 	mavenCentral()
 }
 
-// Black-box functional tests in Karate, run against a live instance: sh gradlew functionalTest
 sourceSets {
 	functionalTest {
-		// The suite reads the seeded catalogue to know what to expect
 		resources.srcDir 'seed'
 	}
 }
@@ -55,8 +53,6 @@ tasks.withType(JavaCompile).configureEach {
 	options.compilerArgs << '-parameters'
 }
 
-// One coverage report for plain and Quarkus tests: the JaCoCo agent covers the plain ones and quarkus-jacoco, which
-// instruments Quarkus' class loader, adds to the same data file and writes the report to build/jacoco-report.
 tasks.named('test') {
 	systemProperty 'java.util.logging.manager', 'org.jboss.logmanager.LogManager'
 	jacoco {
@@ -79,6 +75,5 @@ tasks.register('functionalTest', Test) {
 	systemProperty 'authUrl', System.getenv('AUTH_URL') ?: 'http://localhost:8180'
 	systemProperty 'karate.output.dir', layout.buildDirectory.dir('karate-reports').get().asFile.path
 	outputs.upToDateWhen { false }
-	// The Quarkus plugin sets its log manager on every Test task; this one runs outside Quarkus.
 	doFirst { systemProperties.remove('java.util.logging.manager') }
 }

@@ -16,8 +16,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
 
-// Picks the caches at startup: Redis (PRODUCTS_CACHE_ENABLED) and, in front of it, the in-process copy
-// (PRODUCTS_LOCAL_CACHE_ENABLED), which trades cross-instance consistency for speed; see the README.
 @ApplicationScoped
 class CacheConfiguration {
 

@@ -6,7 +6,6 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 import jakarta.ws.rs.core.Response;
 
-// RFC 9457 problem details.
 @JsonInclude(JsonInclude.Include.NON_NULL)
 record Problem(String title, int status, String detail, String instance, List<FieldViolation> errors) {
 

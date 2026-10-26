@@ -1,6 +1,5 @@
 package com.mango.products.adapters.in.web;
 
-// OAuth 2.0 client credentials: services get a token from the authorization server and send it as a bearer token.
 final class Scopes {
 
 	static final String SCHEME = "oauth2";

@@ -49,7 +49,6 @@ public class ApiExceptionMappers {
 		return Problem.response(Status.BAD_REQUEST, VALIDATION_FAILED, uri.getPath(), violations);
 	}
 
-	// Replaces the Quarkus default, which answers a field of the wrong type with a plain-text body.
 	@ServerExceptionMapper
 	public Response invalidField(MismatchedInputException exception, UriInfo uri) {
 		String field = exception.getPath().stream()
@@ -69,7 +68,6 @@ public class ApiExceptionMappers {
 		return Problem.response(Status.BAD_REQUEST, MALFORMED_BODY, uri.getPath());
 	}
 
-	// Client errors raised by the framework itself (unparseable JSON, unsupported media type) get the same format.
 	@ServerExceptionMapper
 	public Response clientError(WebApplicationException exception, UriInfo uri) {
 		Response response = exception.getResponse();
@@ -81,7 +79,6 @@ public class ApiExceptionMappers {
 		return Problem.response(status, detail, uri.getPath());
 	}
 
-	// Violations come as "method.argument.field"; clients only care about the field.
 	private static String fieldName(ConstraintViolation<?> violation) {
 		String field = null;
 		for (Path.Node node : violation.getPropertyPath()) {

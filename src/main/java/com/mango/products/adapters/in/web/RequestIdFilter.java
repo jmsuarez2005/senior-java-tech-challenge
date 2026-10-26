@@ -7,8 +7,6 @@ import org.jboss.logging.MDC;
 import io.vertx.ext.web.Router;
 import jakarta.enterprise.event.Observes;
 
-// Every log line of a request carries its id; callers can pass their own to follow a request across services.
-// A plain router handler: a JAX-RS filter pair cost several percent of CPU per request under load.
 public class RequestIdFilter {
 
 	static final String HEADER = "X-Request-Id";

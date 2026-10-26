@@ -13,8 +13,6 @@ import com.mango.products.domain.ProductId;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
-// "Updating" a price: same currency and initDate, new value and/or end date. With an expected version the change
-// only applies if nobody changed the product since the client read it.
 @ApplicationScoped
 public class ReplacePrice {
 

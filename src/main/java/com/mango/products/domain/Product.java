@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-// version grows by one with every stored change, so copies of the aggregate can be ordered.
 public record Product(ProductId id, String name, String description, List<Price> prices, long version) {
 
 	private static final Comparator<Price> BY_INIT_DATE = Comparator.comparing(p -> p.period().initDate());
