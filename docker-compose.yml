@@ -12,7 +12,11 @@ services:
       MONGODB_URI: mongodb://mongo:27017/products
       REDIS_URL: redis://redis:6379
       PRODUCTS_CACHE_ENABLED: ${PRODUCTS_CACHE_ENABLED:-true}
+      PRODUCTS_AUTH_ALL: ${PRODUCTS_AUTH_ALL:-false}
+      OIDC_AUTH_SERVER_URL: http://keycloak:8080/realms/products
     depends_on:
+      keycloak:
+        condition: service_healthy
       mongo:
         condition: service_healthy
       redis:
@@ -59,6 +63,33 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    container_name: product-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Tokens carry this issuer whoever asks for them; the app reaches Keycloak through the backchannel name.
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=50"
+    volumes:
+      - ./keycloak/products-realm.json:/opt/keycloak/data/import/products-realm.json:ro
+    ports:
+      - "8180:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
     deploy:
       resources:
         limits:

@@ -18,6 +18,7 @@ import com.mango.products.domain.Price;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -37,7 +38,7 @@ class RedisProductCacheIT {
 
 	@BeforeEach
 	void setUp() {
-		cache = new RedisProductCache(redis, json, Duration.ofMinutes(1));
+		cache = new RedisProductCache(redis, json, Duration.ofMinutes(1), new SimpleMeterRegistry());
 	}
 
 	@Test

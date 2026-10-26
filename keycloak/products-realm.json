@@ -1,0 +1,39 @@
+{
+  "realm": "products",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "clientScopes": [
+    {
+      "name": "products:write",
+      "description": "Create, change and delete prices",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "products-writer",
+      "description": "Service allowed to change prices (local test credentials)",
+      "secret": "products-writer-secret",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "webOrigins": ["*"],
+      "defaultClientScopes": ["products:write"]
+    },
+    {
+      "clientId": "products-reader",
+      "description": "Service that may only read (local test credentials)",
+      "secret": "products-reader-secret",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "webOrigins": ["*"],
+      "defaultClientScopes": []
+    }
+  ]
+}

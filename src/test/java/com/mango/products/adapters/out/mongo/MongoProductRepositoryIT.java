@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import com.mango.products.domain.DateRange;
 import com.mango.products.domain.Money;
 import com.mango.products.domain.Price;
+import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.PriceOverlapException;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
@@ -92,6 +93,52 @@ class MongoProductRepositoryIT {
 	@Test
 	void addingPriceToUnknownProductFails() {
 		assertThatThrownBy(() -> await(repository.addPriceIfNoOverlap(repository.nextId(), price("99.99", EUR, "2024-01-01", null))))
+				.isInstanceOf(ProductNotFoundException.class);
+	}
+
+	@Test
+	void replacesAPriceKeepingItsIdentity() {
+		ProductId id = createProduct();
+		await(repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30")));
+		Price shorter = price("89.99", EUR, "2024-01-01", "2024-03-31");
+
+		Product stored = await(repository.replacePriceIfNoOverlap(id, shorter));
+
+		assertThat(stored.prices()).containsExactly(shorter);
+		assertThat(stored.version()).isEqualTo(2);
+	}
+
+	@Test
+	void replacementMayNotOverlapAnotherPriceButMayCoverItsOwnOldPeriod() {
+		ProductId id = createProduct();
+		await(repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-06-30")));
+		await(repository.addPriceIfNoOverlap(id, price("199.99", EUR, "2025-01-01", null)));
+
+		assertThat(await(repository.replacePriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2024-12-31"))).prices())
+				.hasSize(2);
+		assertThatThrownBy(() -> await(repository.replacePriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", "2025-01-01"))))
+				.isInstanceOf(PriceOverlapException.class);
+	}
+
+	@Test
+	void replacingAMissingPriceFails() {
+		ProductId id = createProduct();
+
+		assertThatThrownBy(() -> await(repository.replacePriceIfNoOverlap(id, price("9.99", EUR, "2024-01-01", null))))
+				.isInstanceOf(PriceNotFoundException.class);
+		assertThatThrownBy(() -> await(repository.replacePriceIfNoOverlap(repository.nextId(), price("9.99", EUR, "2024-01-01", null))))
+				.isInstanceOf(ProductNotFoundException.class);
+	}
+
+	@Test
+	void removesAPriceOnlyOnce() {
+		ProductId id = createProduct();
+		await(repository.addPriceIfNoOverlap(id, price("99.99", EUR, "2024-01-01", null)));
+
+		assertThat(await(repository.removePrice(id, EUR, LocalDate.parse("2024-01-01"))).prices()).isEmpty();
+		assertThatThrownBy(() -> await(repository.removePrice(id, EUR, LocalDate.parse("2024-01-01"))))
+				.isInstanceOf(PriceNotFoundException.class);
+		assertThatThrownBy(() -> await(repository.removePrice(repository.nextId(), EUR, LocalDate.parse("2024-01-01"))))
 				.isInstanceOf(ProductNotFoundException.class);
 	}
 

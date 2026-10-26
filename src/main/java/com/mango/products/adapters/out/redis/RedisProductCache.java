@@ -13,6 +13,8 @@ import com.mango.products.application.port.out.ProductCache;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import io.quarkus.redis.datasource.value.ReactiveValueCommands;
 import io.smallrye.faulttolerance.api.Guard;
@@ -42,6 +44,10 @@ public class RedisProductCache implements ProductCache {
 	private final ReactiveValueCommands<String, String> values;
 	private final ObjectMapper json;
 	private final String ttlSeconds;
+	private final Counter hits;
+	private final Counter misses;
+	private final Counter readErrors;
+	private final Counter writeErrors;
 
 	// One breaker for every Redis call: when Redis is slow or down, requests skip it instead of each paying the timeout.
 	private final Guard redisCircuit = Guard.create()
@@ -54,18 +60,24 @@ public class RedisProductCache implements ProductCache {
 				.done()
 			.build();
 
-	public RedisProductCache(ReactiveRedisDataSource redis, ObjectMapper json, Duration ttl) {
+	public RedisProductCache(ReactiveRedisDataSource redis, ObjectMapper json, Duration ttl, MeterRegistry meters) {
 		this.redis = redis;
 		this.values = redis.value(String.class);
 		this.json = json;
 		this.ttlSeconds = Long.toString(ttl.toSeconds());
+		this.hits = meters.counter("products.cache.reads", "result", "hit");
+		this.misses = meters.counter("products.cache.reads", "result", "miss");
+		this.readErrors = meters.counter("products.cache.reads", "result", "error");
+		this.writeErrors = meters.counter("products.cache.writes", "result", "error");
 	}
 
 	@Override
 	public Uni<Product> get(ProductId id) {
 		return redisCircuit.get(() -> values.get(key(id)), UNI_STRING)
+				.onItem().invoke(value -> (value == null ? misses : hits).increment())
 				.onItem().ifNotNull().transform(value -> read(value).toDomain())
 				.onFailure().recoverWithItem(e -> {
+					readErrors.increment();
 					logFailure("read", id, e);
 					return null;
 				});
@@ -80,6 +92,7 @@ public class RedisProductCache implements ProductCache {
 						.replaceWithVoid(), UNI_VOID)
 				.onFailure().call(e -> evict(product.id()))
 				.onFailure().recoverWithItem(e -> {
+					writeErrors.increment();
 					logFailure("write", product.id(), e);
 					return null;
 				});

@@ -22,7 +22,7 @@ public class FindPriceInForce {
 	public Uni<Price> execute(ProductId productId, LocalDate date, Currency currency) {
 		return findProduct.execute(productId)
 				.map(product -> product.priceAt(date, currency).orElse(null))
-				.onItem().ifNull().failWith(() -> new PriceNotFoundException(productId, date, currency));
+				.onItem().ifNull().failWith(() -> PriceNotFoundException.inForce(productId, date, currency));
 	}
 
 }

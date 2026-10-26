@@ -11,10 +11,17 @@ import static com.mongodb.client.model.Filters.elemMatch;
 import static com.mongodb.client.model.Filters.eq;
 import static com.mongodb.client.model.Filters.gte;
 import static com.mongodb.client.model.Filters.lte;
+import static com.mongodb.client.model.Filters.ne;
 import static com.mongodb.client.model.Filters.not;
 import static com.mongodb.client.model.Updates.combine;
 import static com.mongodb.client.model.Updates.inc;
+import static com.mongodb.client.model.Updates.pull;
 import static com.mongodb.client.model.Updates.push;
+import static com.mongodb.client.model.Updates.set;
+
+import java.time.LocalDate;
+import java.util.Currency;
+import java.util.List;
 
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -23,6 +30,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import com.mango.products.application.port.out.ProductRepository;
 import com.mango.products.domain.Price;
+import com.mango.products.domain.PriceNotFoundException;
 import com.mango.products.domain.PriceOverlapException;
 import com.mango.products.domain.Product;
 import com.mango.products.domain.ProductId;
@@ -80,6 +88,58 @@ class MongoProductRepository implements ProductRepository {
 				.onItem().ifNull().switchTo(() -> explainRejection(id, price));
 	}
 
+	@Override
+	public Uni<Product> replacePriceIfNoOverlap(ProductId id, Price price) {
+		if (!ObjectId.isValid(id.value())) {
+			return Uni.createFrom().failure(new ProductNotFoundException(id));
+		}
+		Document newPrice = ProductDocumentMapper.toDocument(price);
+		Bson samePrice = samePrice(price.money().currency(), price.period().initDate());
+		Bson anyOtherOverlapping = and(overlapping(newPrice), ne(INIT_DATE, newPrice.getString(INIT_DATE)));
+		Bson existingAndWithoutOverlap = and(byId(id), elemMatch(PRICES, samePrice), not(elemMatch(PRICES, anyOtherOverlapping)));
+		Bson replaceAndBumpVersion = combine(set(PRICES + ".$[p]", newPrice), inc(VERSION, 1L));
+		FindOneAndUpdateOptions options = new FindOneAndUpdateOptions()
+				.returnDocument(ReturnDocument.AFTER)
+				.arrayFilters(List.of(and(eq("p." + CURRENCY, newPrice.getString(CURRENCY)),
+						eq("p." + INIT_DATE, newPrice.getString(INIT_DATE)))));
+
+		return products.findOneAndUpdate(existingAndWithoutOverlap, replaceAndBumpVersion, options)
+				.onItem().ifNotNull().transform(ProductDocumentMapper::toDomain)
+				.onItem().ifNull().switchTo(() -> explainRejectedReplacement(id, price));
+	}
+
+	@Override
+	public Uni<Product> removePrice(ProductId id, Currency currency, LocalDate initDate) {
+		if (!ObjectId.isValid(id.value())) {
+			return Uni.createFrom().failure(new ProductNotFoundException(id));
+		}
+		Bson samePrice = samePrice(currency, initDate);
+		Bson removeAndBumpVersion = combine(pull(PRICES, samePrice), inc(VERSION, 1L));
+
+		return products.findOneAndUpdate(and(byId(id), elemMatch(PRICES, samePrice)), removeAndBumpVersion, RETURN_UPDATED)
+				.onItem().ifNotNull().transform(ProductDocumentMapper::toDomain)
+				.onItem().ifNull().switchTo(() -> products.countDocuments(byId(id))
+						.chain(count -> Uni.createFrom().<Product>failure(count > 0
+								? PriceNotFoundException.startingOn(id, initDate, currency)
+								: new ProductNotFoundException(id))));
+	}
+
+	// Only runs when the replacement was rejected: one read to tell which of the three reasons applies.
+	private Uni<Product> explainRejectedReplacement(ProductId id, Price price) {
+		Currency currency = price.money().currency();
+		LocalDate initDate = price.period().initDate();
+		return findById(id).chain(product -> {
+			if (product == null) {
+				return Uni.createFrom().failure(new ProductNotFoundException(id));
+			}
+			boolean exists = product.prices().stream().anyMatch(
+					p -> p.money().currency().equals(currency) && p.period().initDate().equals(initDate));
+			return Uni.createFrom().failure(exists
+					? new PriceOverlapException(id, price)
+					: PriceNotFoundException.startingOn(id, initDate, currency));
+		});
+	}
+
 	private Uni<Product> explainRejection(ProductId id, Price price) {
 		return products.countDocuments(byId(id))
 				.chain(count -> Uni.createFrom().<Product>failure(
@@ -91,6 +151,10 @@ class MongoProductRepository implements ProductRepository {
 		return and(eq(CURRENCY, price.getString(CURRENCY)),
 				lte(INIT_DATE, price.getString(END_DATE)),
 				gte(END_DATE, price.getString(INIT_DATE)));
+	}
+
+	private static Bson samePrice(Currency currency, LocalDate initDate) {
+		return and(eq(CURRENCY, currency.getCurrencyCode()), eq(INIT_DATE, initDate.toString()));
 	}
 
 	private static Bson byId(ProductId id) {
