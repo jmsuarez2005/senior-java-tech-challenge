@@ -37,14 +37,16 @@ services:
   mongo:
     image: mongo:8.0
     container_name: product-mongo
-    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    command: ["--wiredTigerCacheSizeGB", "0.25", "--quiet"]
     ports:
       - "27017:27017"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 2s
+      interval: 30s
       timeout: 2s
-      retries: 30
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
     deploy:
       resources:
         limits:
